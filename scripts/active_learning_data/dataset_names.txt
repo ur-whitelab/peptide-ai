@@ -1,0 +1,9 @@
+antibacterial
+anticancer
+antifungal
+antiHIV
+antiMRSA
+antiparasital
+antiviral
+hemolytic
+soluble
