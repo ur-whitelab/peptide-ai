@@ -17,9 +17,8 @@ from utils import *
 
 def printHelp():
     print('usage: active_learner_uncertainty_min.py '
-          '[peptide_positive_vectors_dir (str)] '
-          '[peptide_negative_vectors_dir (str)] '
-          '[descriptor_file (str)] '
+          '[peptide_positive_vectors_file (str)] '
+          '[peptide_negative_vectors_file (str)] '
           '[output_dirname (str)] '
           '[index (int)]'
           '[regression: (0 or 1)] ')
@@ -44,32 +43,28 @@ def make_convolution(motif_width, num_classes, input_tensor):
     output = tf.math.reduce_max(conv, axis = 1)
     return output
 
-if len(argv) != 7:
+if len(argv) != 6:
     printHelp()
     exit(1)
 
 positive_dirname = argv[1] # positive example data is located here
 negative_dirname = argv[2] # negative example data is located here
-descriptor_file = argv[3] # the pickled chemical descriptors matrix
-output_dirname = argv[4] # where to save the output
-INDEX = argv[5] # which iteration are we on, will be prefixed to filenames.
-regression = bool(int(argv[6]))
+output_dirname = argv[3] # where to save the output
+INDEX = argv[4] # which iteration are we on, will be prefixed to filenames.
+regression = bool(int(argv[5]))
 TRAIN_ITERS_PER_SAMPLE = 50
 
 LEARNING_RATE = 0.001
 DEFAULT_DROPOUT_RATE = 0.0
 NRUNS = 50
-HIDDEN_LAYER_SIZE = 20
+HIDDEN_LAYER_SIZE = 64
 
 # load randomly shuffled training data
-positive_peps, positive_withheld_peps, positive_descriptors, positive_withheld_descriptors = load_data(positive_dirname, descriptor_file, regression)
-negative_peps, negative_withheld_peps, negative_descriptors, negative_withheld_descriptors = load_data(negative_dirname, descriptor_file, regression)
+positive_peps, positive_withheld_peps = load_data(positive_dirname, regression)
+negative_peps, negative_withheld_peps = load_data(negative_dirname, regression)
 
 peps = np.concatenate([positive_peps, negative_peps])
 withheld_peps = np.concatenate([positive_withheld_peps, negative_withheld_peps])
-descriptors = np.concatenate([positive_descriptors, negative_descriptors])
-withheld_descriptors = np.concatenate([positive_withheld_descriptors,
-                                       negative_withheld_descriptors])
 
 labels = np.zeros([len(peps), 2]) # one-hot encoding of labels
 labels[:len(positive_peps),0] += 1. # positive labels are 0 index
@@ -79,8 +74,8 @@ withheld_labels[:len(positive_withheld_peps),0] += 1. # positive labels are 0 in
 withheld_labels[len(positive_withheld_peps):,1] += 1. # negative labels are 1 index
 
 # now re-shuffle all these in the same way
-shuffle_same_way([labels, peps, descriptors])
-shuffle_same_way([withheld_labels, withheld_peps, withheld_descriptors])
+shuffle_same_way([labels, peps])
+shuffle_same_way([withheld_labels, withheld_peps])
 
 #prepare 10 sets of hyperparameter pairs for the task model
 hyperparam_pairs = []
@@ -104,10 +99,6 @@ with tf.Session() as sess:
                                    dtype=tf.int32,
                                    name='labels')
     dropout_rate = tf.placeholder_with_default(tf.constant(DEFAULT_DROPOUT_RATE, dtype=tf.float64), shape=(), name='dropout_rate')
-    # descriptors (should be pre-calculated)
-    descriptors_input = tf.placeholder(shape=[input_tensor.shape[0], len(descriptors[0])], 
-                                       dtype=tf.float64, 
-                                       name='descriptors')
     aa_counts = tf.reduce_sum(input_tensor, axis=1) # just add up the one-hots
     convs = []
     for hparam_pair in hyperparam_pairs:
@@ -124,7 +115,6 @@ with tf.Session() as sess:
                           rate=dropout_rate)
         )
         classifier_inputs.append(tf.concat([classifier_conv_inputs[i],
-                                            descriptors_input,
                                             aa_counts],
                                            1)
         )
@@ -151,15 +141,13 @@ with tf.Session() as sess:
     train_loss = sess.run([total_classifiers_loss],
                           feed_dict={
                               'input:0': peps,
-                              'labels:0': labels,
-                              'descriptors:0': descriptors
+                              'labels:0': labels
                           })
     train_losses.append(train_loss[0])
     withheld_loss = sess.run([total_classifiers_loss],
                              feed_dict={
                                  'input:0': withheld_peps,
                                  'labels:0': withheld_labels,
-                                 'descriptors:0': withheld_descriptors,
                                  'dropout_rate:0': 0.0
                              })
     withheld_losses.append(withheld_loss)
@@ -171,8 +159,7 @@ with tf.Session() as sess:
                           [total_classifiers_loss],
                           feed_dict={
                               'input:0': peps,
-                              'labels:0': labels,
-                              'descriptors:0': descriptors
+                              'labels:0': labels
                           })
         # get which peptide has the highest variance.
         classifier_predictions = output[0]# special case where we only have one "consensus model"
@@ -186,15 +173,13 @@ with tf.Session() as sess:
             opt_output = sess.run([classifier_optimizer, total_classifiers_loss],
                                      feed_dict={
                                          'input:0': [peps[chosen_idx]],
-                                         'labels:0': [labels[chosen_idx]],
-                                         'descriptors:0': [descriptors[chosen_idx]]
+                                         'labels:0': [labels[chosen_idx]]
                                      })
             train_losses.append(opt_output[1])
             withheld_loss = sess.run([total_classifiers_loss],
                                   feed_dict={
                                       'input:0': withheld_peps,
                                       'labels:0': withheld_labels,
-                                      'descriptors:0': withheld_descriptors,
                                       'dropout_rate:0': 0.0
                                   })
             withheld_losses.append(withheld_loss)
@@ -207,7 +192,6 @@ with tf.Session() as sess:
                              feed_dict={
                                  'input:0': [withheld_pep],
                                  'labels:0': [withheld_labels[i]],
-                                 'descriptors:0': [withheld_descriptors[i]],
                                  'dropout_rate:0': 0.0
                              })
         final_withheld_losses.append(this_loss[0])
@@ -216,7 +200,6 @@ with tf.Session() as sess:
                                           feed_dict={
                                               'input:0': withheld_peps,
                                               'labels:0': withheld_labels,
-                                              'descriptors:0': withheld_descriptors,
                                               'dropout_rate:0': 0.0
                                           })
 

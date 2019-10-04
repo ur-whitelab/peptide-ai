@@ -18,7 +18,7 @@ ALPHABET = ['A','R','N','D','C','Q','E','G','H','I', 'L','K','M','F','P','S','T'
 
 MAX_LENGTH = 200
 ALPHABET_SIZE = len(ALPHABET)
-HIDDEN_LAYER_SIZE = 20
+HIDDEN_LAYER_SIZE = 64
 NRUNS = 5000 # number of training runs to do
 
 LEARNING_RATE = 0.001 # this performed best in one control case

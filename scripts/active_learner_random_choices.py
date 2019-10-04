@@ -16,9 +16,8 @@ from utils import *
 
 def printHelp():
     print('usage: test_maml_convolution.py '
-          '[peptide_positive_vectors_dir] '
-          '[peptide_negative_vectors_dir] '
-          '[descriptor_file] '
+          '[peptide_positive_vectors_file] '
+          '[peptide_negative_vectors_file] '
           '[output_dirname] '
           '[index]'
           '[regression: 0 or 1]')
@@ -44,34 +43,31 @@ def make_convolution(motif_width, num_classes, input_tensor):
     return output
 
 
-if len(argv) != 7:
+if len(argv) != 6:
     printHelp()
     exit(1)
 
-positive_dirname = argv[1] # positive example data is located here
-negative_dirname = argv[2] # negative example data is located here
-descriptor_file = argv[3] # the pickled chemical descriptors matrix
-output_dirname = argv[4] # where to save the output
-INDEX = argv[5] # which iteration are we on, will be prefixed to filenames.
-if len(argv) == 7:
-    regression = bool(int(argv[6]))
+positive_filename = argv[1] # positive example data is located here
+negative_filename = argv[2] # negative example data is located here
+output_dirname = argv[3] # where to save the output
+INDEX = argv[4] # which iteration are we on, will be prefixed to filenames.
+if len(argv) == 6:
+    regression = bool(int(argv[5]))
 else:
     regression = False # default to not doing regression
 
 LEARNING_RATE = 0.001
 DEFAULT_DROPOUT_RATE = 0.0
 NRUNS = 50
-HIDDEN_LAYER_SIZE = 20
+HIDDEN_LAYER_SIZE = 64
+TRAIN_ITERS_PER_SAMPLE = 50
 
 # load randomly shuffled training data
-positive_peps, positive_withheld_peps, positive_descriptors, positive_withheld_descriptors = load_data(positive_dirname, descriptor_file, regression)
-negative_peps, negative_withheld_peps, negative_descriptors, negative_withheld_descriptors = load_data(negative_dirname, descriptor_file, regression)
+positive_peps, positive_withheld_peps = load_data(positive_filename,  regression)
+negative_peps, negative_withheld_peps = load_data(negative_filename, regression)
 
 peps = np.concatenate([positive_peps, negative_peps])
 withheld_peps = np.concatenate([positive_withheld_peps, negative_withheld_peps])
-descriptors = np.concatenate([positive_descriptors, negative_descriptors])
-withheld_descriptors = np.concatenate([positive_withheld_descriptors,
-                                       negative_withheld_descriptors])
 
 labels = np.zeros([len(peps), 2]) # one-hot encoding of labels
 labels[:len(positive_peps),0] += 1. # positive labels are 0 index
@@ -81,8 +77,8 @@ withheld_labels[:len(positive_withheld_peps),0] += 1. # positive labels are 0 in
 withheld_labels[len(positive_withheld_peps):,1] += 1. # negative labels are 1 index
 
 # now re-shuffle all these in the same way
-shuffle_same_way([labels, peps, descriptors])
-shuffle_same_way([withheld_labels, withheld_peps, withheld_descriptors])
+shuffle_same_way([labels, peps])
+shuffle_same_way([withheld_labels, withheld_peps])
 
 #prepare 10 sets of hyperparameter pairs for the task model
 hyperparam_pairs = []
@@ -93,7 +89,7 @@ hyperparam_pairs.append((5,6))
 
 train_losses = []
 withheld_losses = []
-pep_choice_indicies = []
+pep_choice_indices = []
 
 with tf.Session() as sess:
     # peptide sequences input
@@ -105,10 +101,7 @@ with tf.Session() as sess:
                                    dtype=tf.int32,
                                    name='labels')
     dropout_rate = tf.placeholder_with_default(tf.constant(DEFAULT_DROPOUT_RATE, dtype=tf.float64), shape=(), name='dropout_rate')
-    # descriptors (should be pre-calculated)
-    descriptors_input = tf.placeholder(shape=[input_tensor.shape[0], len(descriptors[0])], 
-                                       dtype=tf.float64, 
-                                       name='descriptors')
+    aa_counts = tf.reduce_sum(input_tensor, axis=1) # just add up the one-hots
     convs = []
     for hparam_pair in hyperparam_pairs:
         convs.append(make_convolution(hparam_pair[0], hparam_pair[1], input_tensor))
@@ -124,7 +117,6 @@ with tf.Session() as sess:
                           rate=dropout_rate)
         )
         classifier_inputs.append(tf.concat([classifier_conv_inputs[i],
-                                            descriptors_input,
                                             aa_counts],
                                            1)
         )
@@ -152,15 +144,13 @@ with tf.Session() as sess:
     train_loss = sess.run([total_classifiers_loss],
                           feed_dict={
                               'input:0': peps,
-                              'labels:0': labels,
-                              'descriptors:0': descriptors
+                              'labels:0': labels
                           })
     train_losses.append(train_loss[0])
     withheld_loss = sess.run([total_classifiers_loss],
                              feed_dict={
                                  'input:0': withheld_peps,
                                  'labels:0': withheld_labels,
-                                 'descriptors:0': withheld_descriptors,
                                  'dropout_rate:0': 0.0
                              })
     withheld_losses.append(withheld_loss)
@@ -170,34 +160,29 @@ with tf.Session() as sess:
         output = sess.run(classifier_outputs,
                           feed_dict={
                               'input:0': peps,
-                              'labels:0': labels,
-                              'descriptors:0': descriptors
+                              'labels:0': labels
                           })
         # make random selections for next training point.
-        variances = np.array([[item[0] * item[1] for item in predictions_arr] for predictions_arr in output])
-        chosen_idx = np.random.choice(range(len(variances)), p=np.ones(len(variances))/float(len(variances)))
-        pep_choice_indicies.append(chosen_idx)
+        chosen_idx = np.random.randint(0, len(peps))
+        pep_choice_indices.append(chosen_idx)
         # train for the chosen number of steps after each observation
         for j in range(TRAIN_ITERS_PER_SAMPLE):
             opt_output = sess.run([classifier_optimizer],
                                   feed_dict={
                                       'input:0': [peps[chosen_idx]],
-                                      'labels:0': [labels[chosen_idx]],
-                                      'descriptors:0': [descriptors[chosen_idx]]
+                                      'labels:0': [labels[chosen_idx]]
                                   })
             # get the loss
             train_loss = sess.run([total_classifiers_loss],
                                   feed_dict={
                                       'input:0': peps,
-                                      'labels:0': labels,
-                                      'descriptors:0': descriptors
+                                      'labels:0': labels
                                   })
             train_losses.append(train_loss[0])
             withheld_loss = sess.run([total_classifiers_loss],
                                   feed_dict={
                                       'input:0': withheld_peps,
                                       'labels:0': withheld_labels,
-                                      'descriptors:0': withheld_descriptors,
                                       'dropout_rate:0': 0.0
                                   })
             withheld_losses.append(withheld_loss)
@@ -209,7 +194,6 @@ with tf.Session() as sess:
                             feed_dict={
                                 'input:0': [withheld_pep],
                                 'labels:0': [withheld_labels[i]],
-                                'descriptors:0': [withheld_descriptors[i]],
                                 'dropout_rate:0': 0.0
                             })
        final_withheld_losses.append(this_loss[0])
@@ -218,14 +202,13 @@ with tf.Session() as sess:
                                           feed_dict={
                                               'input:0': withheld_peps,
                                               'labels:0': withheld_labels,
-                                              'descriptors:0': withheld_descriptors,
                                               'dropout_rate:0': 0.0
                                           })
 
 np.savetxt('{}/{}_train_losses.txt'.format(output_dirname, INDEX.zfill(4)), train_losses)
 np.savetxt('{}/{}_withheld_losses.txt'.format(output_dirname, INDEX.zfill(4)), withheld_losses)
 np.savetxt('{}/{}_final_losses.txt'.format(output_dirname, INDEX.zfill(4)), final_withheld_losses)
-np.savetxt('{}/{}_choices.txt'.format(output_dirname, INDEX.zfill(4)), pep_choice_indicies)
+np.savetxt('{}/{}_choices.txt'.format(output_dirname, INDEX.zfill(4)), pep_choice_indices)
 
 # AUC analysis (misclassification) for final withheld predictions
 withheld_aucs = []
