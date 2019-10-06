@@ -24,25 +24,6 @@ def printHelp():
           '[regression: (0 or 1)] ')
     exit()
 
-def make_convolution(motif_width, num_classes, input_tensor):
-    data_tensor = input_tensor
-    filter_tensor = tf.Variable(np.random.random([motif_width,# filter width
-                                                  ALPHABET_SIZE,# in channels
-                                                  num_classes]),# out channels 
-                                name='filter_{}_width_{}_classes'.format(
-                                    motif_width,
-                                    num_classes),
-                                dtype=tf.float64)
-    conv = tf.nn.conv1d(data_tensor,
-                        filter_tensor,
-                        padding='SAME', # keep the dimensions of output the same
-                        stride=1, # look at each residue
-                        name='convolution_{}_width_{}_classes'.format(
-                            motif_width,
-                            num_classes))
-    output = tf.math.reduce_max(conv, axis = 1)
-    return output
-
 if len(argv) != 6:
     printHelp()
     exit(1)
