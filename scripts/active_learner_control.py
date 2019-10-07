@@ -167,15 +167,6 @@ with tf.Session() as sess:
                               })
         withheld_losses.append(withheld_loss)
     print('RUN FINISHED. CHECKING LOSS ON WITHHELD DATA.')
-    final_withheld_losses = []
-    for i, withheld_pep in enumerate(withheld_peps):
-       this_loss = sess.run([total_classifiers_loss],
-                            feed_dict={
-                                'input:0': [withheld_pep],
-                                'labels:0': [withheld_labels[i]],
-                                'dropout_rate:0': 0.0
-                            })
-       final_withheld_losses.append(this_loss[0])
     # now that training is done, get final withheld predictions
     final_withheld_predictions = sess.run(classifier_outputs,
                                           feed_dict={
@@ -186,7 +177,6 @@ with tf.Session() as sess:
 
 np.savetxt('{}/{}_train_losses.txt'.format(output_dirname, INDEX.zfill(4)), train_losses)
 np.savetxt('{}/{}_withheld_losses.txt'.format(output_dirname, INDEX.zfill(4)), withheld_losses)
-np.savetxt('{}/{}_final_losses.txt'.format(output_dirname, INDEX.zfill(4)), final_withheld_losses)
 np.savetxt('{}/{}_choices.txt'.format(output_dirname, INDEX.zfill(4)), pep_choice_indices)
 
 # can't do ROC for regression

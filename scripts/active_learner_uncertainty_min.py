@@ -42,21 +42,18 @@ NRUNS = 50
 HIDDEN_LAYER_SIZE = 64
 
 # load randomly shuffled training data
-positive_peps, positive_withheld_peps = load_data(positive_filename, regression)
-# negative dataset only needed if we're classifying
-if not regression:
-    negative_peps, negative_withheld_peps = load_data(negative_filename, regression)
-else:
-    negative_peps, negative_withheld_peps = np.empty(0), np.empty(0)
-
-peps = np.concatenate([positive_peps, negative_peps])
-withheld_peps = np.concatenate([positive_withheld_peps, negative_withheld_peps])
-
-# get activities if we're doing regression, else just calculate them
 if regression:
-    labels = np.zeros([len(peps), 1])
-    labels += np.load(open(negative_filename, 'rb'))
+    positive_peps, positive_withheld_peps, labels, withheld_labels = load_data(positive_filename, regression, negative_filename)
+# negative dataset only needed if we're classifying
 else:
+    positive_peps, positive_withheld_peps = load_data(positive_filename, regression)
+    negative_peps, negative_withheld_peps = load_data(negative_filename, regression)
+
+peps = np.concatenate([positive_peps, negative_peps]) if not regression else positive_peps
+withheld_peps = np.concatenate([positive_withheld_peps, negative_withheld_peps]) if not regression else positive_withheld_peps
+
+# calculate activities if we're not doing regression
+if not regression:
     labels = np.zeros([len(peps), 2]) # one-hot encoding of labels
     labels[:len(positive_peps),0] += 1. # positive labels are 0 index
     labels[len(positive_peps):,1] += 1. # negative labels are 1 index
@@ -154,6 +151,7 @@ with tf.Session() as sess:
                           })
         # get which peptide has the highest variance.
         classifier_predictions = output[0]# special case where we only have one "consensus model"
+        # TODO: fix this for regression!
         variances = [item[0] * item[1] for item in classifier_predictions]
         var_sum = np.sum(variances)
         chosen_idx = np.random.choice(range(len(variances)), p=[(item/var_sum) for item in variances])
@@ -166,27 +164,18 @@ with tf.Session() as sess:
                                          'input:0': [peps[chosen_idx]],
                                          'labels:0': [labels[chosen_idx]]
                                      })
-            train_losses.append(opt_output[1])
-            withheld_loss = sess.run([total_classifiers_loss],
-                                  feed_dict={
-                                      'input:0': withheld_peps,
-                                      'labels:0': withheld_labels,
-                                      'dropout_rate:0': 0.0
-                                  })
-            withheld_losses.append(withheld_loss)
+            
             # pick a random peptide to train on for next step
             chosen_idx = np.random.choice(pep_choice_indices)
+        train_losses.append(opt_output[1])
+        withheld_loss = sess.run([total_classifiers_loss],
+                                 feed_dict={
+                                     'input:0': withheld_peps,
+                                     'labels:0': withheld_labels,
+                                     'dropout_rate:0': 0.0
+                                 })
+        withheld_losses.append(withheld_loss)
     print('RUN FINISHED. CHECKING LOSS ON WITHHELD DATA.')
-    final_withheld_losses = []
-    for i, withheld_pep in enumerate(withheld_peps):
-        this_loss = sess.run([total_classifiers_loss],
-                             feed_dict={
-                                 'input:0': [withheld_pep],
-                                 'labels:0': [withheld_labels[i]],
-                                 'dropout_rate:0': 0.0
-                             })
-        final_withheld_losses.append(this_loss[0])
-    # now that training is done, get final withheld predictions
     final_withheld_predictions = sess.run(classifier_outputs,
                                           feed_dict={
                                               'input:0': withheld_peps,
@@ -196,24 +185,25 @@ with tf.Session() as sess:
 
 np.savetxt('{}/{}_train_losses.txt'.format(output_dirname, INDEX.zfill(4)), train_losses)
 np.savetxt('{}/{}_withheld_losses.txt'.format(output_dirname, INDEX.zfill(4)), withheld_losses)
-np.savetxt('{}/{}_final_losses.txt'.format(output_dirname, INDEX.zfill(4)), final_withheld_losses)
 np.savetxt('{}/{}_choices.txt'.format(output_dirname, INDEX.zfill(4)), pep_choice_indices)
 
-# AUC analysis (misclassification) for final withheld predictions
-withheld_aucs = []
-withheld_fprs = []
-withheld_tprs = []
-withheld_thresholds = []
-# iterate over all models
-for i, predictions_arr in enumerate(final_withheld_predictions):
-    withheld_fpr, withheld_tpr, withheld_threshold = roc_curve(withheld_labels[:,0],
-                                                                predictions_arr[:,0])
-    withheld_fprs.append(withheld_fpr)
-    withheld_tprs.append(withheld_tpr)
-    withheld_thresholds.append(withheld_threshold)
-    withheld_auc = auc(withheld_fpr, withheld_tpr)
-    withheld_aucs.append(withheld_auc)
-    np.savetxt('{}/{}_fpr_{}.txt'.format(output_dirname, INDEX.zfill(4), i), withheld_fpr)
-    np.savetxt('{}/{}_tpr_{}.txt'.format(output_dirname, INDEX.zfill(4), i), withheld_tpr)
-    np.savetxt('{}/{}_thresholds_{}.txt'.format(output_dirname, INDEX.zfill(4), i), withheld_thresholds)
-np.savetxt('{}/{}_auc.txt'.format(output_dirname, INDEX.zfill(4)), withheld_aucs)
+# can't do ROC for regression
+if not regression:
+    # AUC analysis (misclassification) for final withheld predictions
+    withheld_aucs = []
+    withheld_fprs = []
+    withheld_tprs = []
+    withheld_thresholds = []
+    # iterate over all models
+    for i, predictions_arr in enumerate(final_withheld_predictions):
+        withheld_fpr, withheld_tpr, withheld_threshold = roc_curve(withheld_labels[:,0],
+                                                                    predictions_arr[:,0])
+        withheld_fprs.append(withheld_fpr)
+        withheld_tprs.append(withheld_tpr)
+        withheld_thresholds.append(withheld_threshold)
+        withheld_auc = auc(withheld_fpr, withheld_tpr)
+        withheld_aucs.append(withheld_auc)
+        np.save('{}/{}_fpr_{}.txt'.format(output_dirname, INDEX.zfill(4), i), withheld_fpr)
+        np.save('{}/{}_tpr_{}.txt'.format(output_dirname, INDEX.zfill(4), i), withheld_tpr)
+        np.save('{}/{}_thresholds_{}.txt'.format(output_dirname, INDEX.zfill(4), i), withheld_thresholds)
+    np.savetxt('{}/{}_auc.txt'.format(output_dirname, INDEX.zfill(4)), withheld_aucs)

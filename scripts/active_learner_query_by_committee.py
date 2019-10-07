@@ -15,7 +15,7 @@ from utils import *
    https://github.com/tensorflow/graphics/issues/2#issuecomment-497428806'''
 
 def printHelp():
-    print('usage: test_maml_convolution.py '
+    print('usage: active_learner_query_by_committee.py '
           '[peptide_positive_vectors_dir] '
           '[peptide_negative_vectors_dir] '
           '[output_dirname] '
@@ -47,8 +47,8 @@ else:
     positive_peps, positive_withheld_peps = load_data(positive_filename, regression)
     negative_peps, negative_withheld_peps = load_data(negative_filename, regression)
 
-peps = np.concatenate([positive_peps, negative_peps])
-withheld_peps = np.concatenate([positive_withheld_peps, negative_withheld_peps])
+peps = np.concatenate([positive_peps, negative_peps]) if not regression else positive_peps
+withheld_peps = np.concatenate([positive_withheld_peps, negative_withheld_peps]) if not regression else positive_withheld_peps
 
 # calculate activities if we're not doing regression
 if not regression:
@@ -149,6 +149,7 @@ with tf.Session() as sess:
                           })
         # get classifier committee scores for each peptide
         classifier_predictions = output
+        # TODO: fix this for regression!
         raw_variances = np.array([[item[0] * item[1] for item in predictions_arr] for predictions_arr in output])
         variances = np.mean(raw_variances, axis=0)
         var_sum = np.sum(variances)
@@ -162,26 +163,18 @@ with tf.Session() as sess:
                                       'input:0': [peps[chosen_idx]],
                                       'labels:0': [labels[chosen_idx]]
                                   })
-            train_losses.append(opt_output[1])
-            withheld_loss = sess.run([total_classifiers_loss],
-                                  feed_dict={
-                                      'input:0': withheld_peps,
-                                      'labels:0': withheld_labels,
-                                      'dropout_rate:0': 0.0
-                                  })
-            withheld_losses.append(withheld_loss)
             # pick a random peptide to train on for next step
             chosen_idx = np.random.choice(pep_choice_indices)
+        #track train and withheld losses after our "epoch"
+        train_losses.append(opt_output[1])
+        withheld_loss = sess.run([total_classifiers_loss],
+                                 feed_dict={
+                                     'input:0': withheld_peps,
+                                     'labels:0': withheld_labels,
+                                     'dropout_rate:0': 0.0
+                                 })
+        withheld_losses.append(withheld_loss)
     print('RUN FINISHED. CHECKING LOSS ON WITHHELD DATA.')
-    final_withheld_losses = []
-    for i, withheld_pep in enumerate(withheld_peps):
-        this_loss = sess.run([total_classifiers_loss],
-                             feed_dict={
-                                 'input:0': [withheld_pep],
-                                 'labels:0': [withheld_labels[i]],
-                                 'dropout_rate:0': 0.0
-                             })
-        final_withheld_losses.append(this_loss[0])
     # now that training is done, get final withheld predictions
     final_withheld_predictions = sess.run(classifier_outputs,
                                           feed_dict={
@@ -192,7 +185,6 @@ with tf.Session() as sess:
 
 np.savetxt('{}/{}_train_losses.txt'.format(output_dirname, INDEX.zfill(4)), train_losses)
 np.savetxt('{}/{}_withheld_losses.txt'.format(output_dirname, INDEX.zfill(4)), withheld_losses)
-np.savetxt('{}/{}_final_losses.txt'.format(output_dirname, INDEX.zfill(4)), final_withheld_losses)
 np.savetxt('{}/{}_choices.txt'.format(output_dirname, INDEX.zfill(4)), pep_choice_indices)
 
 # can't do ROC for regression
@@ -211,7 +203,7 @@ if not regression:
         withheld_thresholds.append(withheld_threshold)
         withheld_auc = auc(withheld_fpr, withheld_tpr)
         withheld_aucs.append(withheld_auc)
-        np.savetxt('{}/{}_fpr_{}.txt'.format(output_dirname, INDEX.zfill(4), i), withheld_fpr)
-        np.savetxt('{}/{}_tpr_{}.txt'.format(output_dirname, INDEX.zfill(4), i), withheld_tpr)
-        np.savetxt('{}/{}_thresholds_{}.txt'.format(output_dirname, INDEX.zfill(4), i), withheld_thresholds)
+        np.save('{}/{}_fpr_{}.txt'.format(output_dirname, INDEX.zfill(4), i), withheld_fpr)
+        np.save('{}/{}_tpr_{}.txt'.format(output_dirname, INDEX.zfill(4), i), withheld_tpr)
+        np.save('{}/{}_thresholds_{}.txt'.format(output_dirname, INDEX.zfill(4), i), withheld_thresholds)
     np.savetxt('{}/{}_auc.txt'.format(output_dirname, INDEX.zfill(4)), withheld_aucs)
