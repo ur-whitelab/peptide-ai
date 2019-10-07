@@ -21,15 +21,16 @@ def printHelp():
           '[peptide_negative_vectors_file (str)] '
           '[output_dirname (str)] '
           '[index (int)]'
-          '[regression: (0 or 1)] ')
+          '[regression: (0 or 1)] '
+          '(Use negative_vectors_file for activities file when doing regression.)')
     exit()
 
 if len(argv) != 6:
     printHelp()
     exit(1)
 
-positive_dirname = argv[1] # positive example data is located here
-negative_dirname = argv[2] # negative example data is located here
+positive_filename = argv[1] # positive example data is located here
+negative_filename= argv[2] # negative example data is located here
 output_dirname = argv[3] # where to save the output
 INDEX = argv[4] # which iteration are we on, will be prefixed to filenames.
 regression = bool(int(argv[5]))
@@ -41,18 +42,27 @@ NRUNS = 50
 HIDDEN_LAYER_SIZE = 64
 
 # load randomly shuffled training data
-positive_peps, positive_withheld_peps = load_data(positive_dirname, regression)
-negative_peps, negative_withheld_peps = load_data(negative_dirname, regression)
+positive_peps, positive_withheld_peps = load_data(positive_filename, regression)
+# negative dataset only needed if we're classifying
+if not regression:
+    negative_peps, negative_withheld_peps = load_data(negative_filename, regression)
+else:
+    negative_peps, negative_withheld_peps = np.empty(0), np.empty(0)
 
 peps = np.concatenate([positive_peps, negative_peps])
 withheld_peps = np.concatenate([positive_withheld_peps, negative_withheld_peps])
 
-labels = np.zeros([len(peps), 2]) # one-hot encoding of labels
-labels[:len(positive_peps),0] += 1. # positive labels are 0 index
-labels[len(positive_peps):,1] += 1. # negative labels are 1 index
-withheld_labels = np.zeros([len(withheld_peps), 2]) # one-hot encoding of labels
-withheld_labels[:len(positive_withheld_peps),0] += 1. # positive labels are 0 index
-withheld_labels[len(positive_withheld_peps):,1] += 1. # negative labels are 1 index
+# get activities if we're doing regression, else just calculate them
+if regression:
+    labels = np.zeros([len(peps), 1])
+    labels += np.load(open(negative_filename, 'rb'))
+else:
+    labels = np.zeros([len(peps), 2]) # one-hot encoding of labels
+    labels[:len(positive_peps),0] += 1. # positive labels are 0 index
+    labels[len(positive_peps):,1] += 1. # negative labels are 1 index
+    withheld_labels = np.zeros([len(withheld_peps), 2]) # one-hot encoding of labels
+    withheld_labels[:len(positive_withheld_peps),0] += 1. # positive labels are 0 index
+    withheld_labels[len(positive_withheld_peps):,1] += 1. # negative labels are 1 index
 
 # now re-shuffle all these in the same way
 shuffle_same_way([labels, peps])
@@ -76,7 +86,7 @@ with tf.Session() as sess:
     input_tensor = tf.placeholder(shape=np.array((None, MAX_LENGTH, ALPHABET_SIZE)),
                                   dtype=tf.float64,
                                   name='input')
-    labels_tensor = tf.placeholder(shape=(input_tensor.shape[0], 2),
+    labels_tensor = tf.placeholder(shape=(input_tensor.shape[0], labels.shape[1]),
                                    dtype=tf.int32,
                                    name='labels')
     dropout_rate = tf.placeholder_with_default(tf.constant(DEFAULT_DROPOUT_RATE, dtype=tf.float64), shape=(), name='dropout_rate')
@@ -107,7 +117,7 @@ with tf.Session() as sess:
         # output is 2D: probabilities of 'has this property'/'does not have'
         # easier to compare logits with one-hot labels this way
         classifier_outputs.append(tf.layers.dense(classifier_hidden_layers[i],
-                                                  2,
+                                                  labels.shape[1],
                                                   activation=tf.nn.softmax))
     # Instead of learner NN model, here we use uncertainty minimization
     # loss in the classifiers is number of misclassifications

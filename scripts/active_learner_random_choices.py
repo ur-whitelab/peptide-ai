@@ -20,7 +20,8 @@ def printHelp():
           '[peptide_negative_vectors_file] '
           '[output_dirname] '
           '[index]'
-          '[regression: 0 or 1]')
+          '[regression: 0 or 1]'
+          '(Use negative_vectors_file for activities file when doing regression.)')
     exit()
 
 if len(argv) != 6:
@@ -43,18 +44,24 @@ HIDDEN_LAYER_SIZE = 64
 TRAIN_ITERS_PER_SAMPLE = 50
 
 # load randomly shuffled training data
-positive_peps, positive_withheld_peps = load_data(positive_filename,  regression)
-negative_peps, negative_withheld_peps = load_data(negative_filename, regression)
+if regression:
+    positive_peps, positive_withheld_peps, labels, withheld_labels = load_data(positive_filename, regression, negative_filename)
+# negative dataset only needed if we're classifying
+else:
+    positive_peps, positive_withheld_peps = load_data(positive_filename, regression)
+    negative_peps, negative_withheld_peps = load_data(negative_filename, regression)
 
 peps = np.concatenate([positive_peps, negative_peps])
 withheld_peps = np.concatenate([positive_withheld_peps, negative_withheld_peps])
 
-labels = np.zeros([len(peps), 2]) # one-hot encoding of labels
-labels[:len(positive_peps),0] += 1. # positive labels are 0 index
-labels[len(positive_peps):,1] += 1. # negative labels are 1 index
-withheld_labels = np.zeros([len(withheld_peps), 2]) # one-hot encoding of labels
-withheld_labels[:len(positive_withheld_peps),0] += 1. # positive labels are 0 index
-withheld_labels[len(positive_withheld_peps):,1] += 1. # negative labels are 1 index
+# calculate activities if we're not doing regression
+if not regression:
+    labels = np.zeros([len(peps), 2]) # one-hot encoding of labels
+    labels[:len(positive_peps),0] += 1. # positive labels are 0 index
+    labels[len(positive_peps):,1] += 1. # negative labels are 1 index
+    withheld_labels = np.zeros([len(withheld_peps), 2]) # one-hot encoding of labels
+    withheld_labels[:len(positive_withheld_peps),0] += 1. # positive labels are 0 index
+    withheld_labels[len(positive_withheld_peps):,1] += 1. # negative labels are 1 index
 
 # now re-shuffle all these in the same way
 shuffle_same_way([labels, peps])
@@ -77,7 +84,7 @@ with tf.Session() as sess:
     input_tensor = tf.placeholder(shape=np.array((None, MAX_LENGTH, ALPHABET_SIZE)),
                                   dtype=tf.float64,
                                   name='input')
-    labels_tensor = tf.placeholder(shape=(input_tensor.shape[0], 2),
+    labels_tensor = tf.placeholder(shape=(input_tensor.shape[0], labels.shape[1]),
                                    dtype=tf.int32,
                                    name='labels')
     dropout_rate = tf.placeholder_with_default(tf.constant(DEFAULT_DROPOUT_RATE, dtype=tf.float64), shape=(), name='dropout_rate')
@@ -102,14 +109,14 @@ with tf.Session() as sess:
         )
         classifier_hidden_layers.append(tf.nn.dropout(tf.layers.dense(classifier_inputs[i],
                                                                       HIDDEN_LAYER_SIZE,
-                                                                      activation=tf.nn.tanh),
+                                                                      activation=tf.nn.tanh if not regression else tf.nn.relu),
                                                       rate=dropout_rate)
         )
         # output is 2D: probabilities of 'has this property'/'does not have'
         # easier to compare logits with one-hot labels this way
         classifier_outputs.append(tf.layers.dense(classifier_hidden_layers[i],
-                                                  2,
-                                                  activation=tf.nn.softmax))
+                                                  labels.shape[1],
+                                                  activation=tf.nn.softmax if not regression else None))
     # Instead of learner NN model, here we use uncertainty minimization
     # loss in the classifiers is number of misclassifications
     classifiers_losses = [tf.losses.absolute_difference(labels=labels_tensor,
@@ -190,21 +197,23 @@ np.savetxt('{}/{}_withheld_losses.txt'.format(output_dirname, INDEX.zfill(4)), w
 np.savetxt('{}/{}_final_losses.txt'.format(output_dirname, INDEX.zfill(4)), final_withheld_losses)
 np.savetxt('{}/{}_choices.txt'.format(output_dirname, INDEX.zfill(4)), pep_choice_indices)
 
-# AUC analysis (misclassification) for final withheld predictions
-withheld_aucs = []
-withheld_fprs = []
-withheld_tprs = []
-withheld_thresholds = []
-# iterate over all models
-for i, predictions_arr in enumerate(final_withheld_predictions):
-    withheld_fpr, withheld_tpr, withheld_threshold = roc_curve(withheld_labels[:,0],
-                                                                predictions_arr[:,0])
-    withheld_fprs.append(withheld_fpr)
-    withheld_tprs.append(withheld_tpr)
-    withheld_thresholds.append(withheld_threshold)
-    withheld_auc = auc(withheld_fpr, withheld_tpr)
-    withheld_aucs.append(withheld_auc)
-    np.savetxt('{}/{}_fprs_{}.txt'.format(output_dirname, INDEX.zfill(4), i), withheld_fpr)
-    np.savetxt('{}/{}_tprs_{}.txt'.format(output_dirname, INDEX.zfill(4), i), withheld_tpr)
-    np.savetxt('{}/{}_thresholds_{}.txt'.format(output_dirname, INDEX.zfill(4), i), withheld_threshold)
-np.savetxt('{}/{}_auc.txt'.format(output_dirname, INDEX.zfill(4)), withheld_aucs)
+# can't do ROC for regression
+if not regression:
+    # AUC analysis (misclassification) for final withheld predictions
+    withheld_aucs = []
+    withheld_fprs = []
+    withheld_tprs = []
+    withheld_thresholds = []
+    # iterate over all models
+    for i, predictions_arr in enumerate(final_withheld_predictions):
+        withheld_fpr, withheld_tpr, withheld_threshold = roc_curve(withheld_labels[:,0],
+                                                                    predictions_arr[:,0])
+        withheld_fprs.append(withheld_fpr)
+        withheld_tprs.append(withheld_tpr)
+        withheld_thresholds.append(withheld_threshold)
+        withheld_auc = auc(withheld_fpr, withheld_tpr)
+        withheld_aucs.append(withheld_auc)
+        np.savetxt('{}/{}_fpr_{}.txt'.format(output_dirname, INDEX.zfill(4), i), withheld_fpr)
+        np.savetxt('{}/{}_tpr_{}.txt'.format(output_dirname, INDEX.zfill(4), i), withheld_tpr)
+        np.savetxt('{}/{}_thresholds_{}.txt'.format(output_dirname, INDEX.zfill(4), i), withheld_thresholds)
+    np.savetxt('{}/{}_auc.txt'.format(output_dirname, INDEX.zfill(4)), withheld_aucs)
