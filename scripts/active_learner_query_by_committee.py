@@ -106,14 +106,14 @@ with tf.Session() as sess:
         )
         classifier_hidden_layers.append(tf.nn.dropout(tf.layers.dense(classifier_inputs[i],
                                                                       HIDDEN_LAYER_SIZE,
-                                                                      activation=tf.nn.tanh if not regression else tf.nn.relu),
+                                                                      activation=tf.nn.tanh),
                                                       rate=dropout_rate)
         )
         # output is 2D: probabilities of 'has this property'/'does not have'
         # easier to compare logits with one-hot labels this way
         classifier_outputs.append(tf.layers.dense(classifier_hidden_layers[i],
                                                   labels.shape[1],
-                                                  activation=tf.nn.softmax if not regression else None))
+                                                  activation=tf.nn.softmax if not regression else tf.math.sigmoid))
     # Instead of learner NN model, here we use uncertainty minimization
     # loss in the classifiers is number of misclassifications
     classifiers_losses = [tf.losses.absolute_difference(labels=labels_tensor,
@@ -140,7 +140,8 @@ with tf.Session() as sess:
     withheld_losses.append(withheld_loss)
     for i in tqdm(range(NRUNS)):
         # run the classifiers on all available peptides to get their outputs
-        # then pick the one with the highest variance (p*(1-p)) to train with, then
+        # then pick the one with the highest variance (p*(1-p)) (classification) or highest
+        # STDEV of committee score (regression) to train with, then
         # train for TRAIN_ITERS_PER_SAMPLE iterations, sampling from past observations
         output = sess.run(classifier_outputs,
                           feed_dict={
@@ -150,11 +151,17 @@ with tf.Session() as sess:
         # get classifier committee scores for each peptide
         classifier_predictions = output
         # TODO: fix this for regression!
-        raw_variances = np.array([[item[0] * item[1] for item in predictions_arr] for predictions_arr in output])
-        variances = np.mean(raw_variances, axis=0)
-        var_sum = np.sum(variances)
+        if not regression:
+            raw_variances = np.array([[item[0] * item[1] for item in predictions_arr] for predictions_arr in output])
+            variances = np.mean(raw_variances, axis=0)
+            var_sum = np.sum(variances)
+            probs_arr = variances/var_sum
+        else:
+            stdevs = np.std(np.array(output), axis=0)
+            probs_arr = stdevs[:,0] / np.sum(stdevs)
         # now choose randomly, weighted by how much the models disagree
-        chosen_idx = np.random.choice(range(len(variances)), p=(variances/var_sum))
+        # using len(peps) here ensures our probs arr is correct length
+        chosen_idx = np.random.choice(range(len(peps)), p=probs_arr) 
         pep_choice_indices.append(chosen_idx)
         # train for the chosen number of steps after each observation
         for j in range(TRAIN_ITERS_PER_SAMPLE):
@@ -203,7 +210,7 @@ if not regression:
         withheld_thresholds.append(withheld_threshold)
         withheld_auc = auc(withheld_fpr, withheld_tpr)
         withheld_aucs.append(withheld_auc)
-        np.save('{}/{}_fpr_{}.txt'.format(output_dirname, INDEX.zfill(4), i), withheld_fpr)
-        np.save('{}/{}_tpr_{}.txt'.format(output_dirname, INDEX.zfill(4), i), withheld_tpr)
-        np.save('{}/{}_thresholds_{}.txt'.format(output_dirname, INDEX.zfill(4), i), withheld_thresholds)
+        np.save('{}/{}_fpr_{}.npy'.format(output_dirname, INDEX.zfill(4), i), withheld_fpr)
+        np.save('{}/{}_tpr_{}.npy'.format(output_dirname, INDEX.zfill(4), i), withheld_tpr)
+        np.save('{}/{}_thresholds_{}.npy'.format(output_dirname, INDEX.zfill(4), i), withheld_thresholds)
     np.savetxt('{}/{}_auc.txt'.format(output_dirname, INDEX.zfill(4)), withheld_aucs)

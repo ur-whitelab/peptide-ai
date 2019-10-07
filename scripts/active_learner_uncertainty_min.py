@@ -115,7 +115,7 @@ with tf.Session() as sess:
         # easier to compare logits with one-hot labels this way
         classifier_outputs.append(tf.layers.dense(classifier_hidden_layers[i],
                                                   labels.shape[1],
-                                                  activation=tf.nn.softmax))
+                                                  activation=tf.nn.softmax if not regression else tf.math.sigmoid))
     # Instead of learner NN model, here we use uncertainty minimization
     # loss in the classifiers is number of misclassifications
     classifiers_losses = [tf.losses.absolute_difference(labels=labels_tensor, predictions=x) for x in classifier_outputs]
@@ -154,7 +154,7 @@ with tf.Session() as sess:
         # TODO: fix this for regression!
         variances = [item[0] * item[1] for item in classifier_predictions]
         var_sum = np.sum(variances)
-        chosen_idx = np.random.choice(range(len(variances)), p=[(item/var_sum) for item in variances])
+        chosen_idx = np.random.choice(range(len(peps)), p=[(item/var_sum) for item in variances])
         pep_choice_indices.append(chosen_idx)
         # train for the chosen number of steps after each observation
         for j in range(TRAIN_ITERS_PER_SAMPLE):
@@ -203,7 +203,7 @@ if not regression:
         withheld_thresholds.append(withheld_threshold)
         withheld_auc = auc(withheld_fpr, withheld_tpr)
         withheld_aucs.append(withheld_auc)
-        np.save('{}/{}_fpr_{}.txt'.format(output_dirname, INDEX.zfill(4), i), withheld_fpr)
-        np.save('{}/{}_tpr_{}.txt'.format(output_dirname, INDEX.zfill(4), i), withheld_tpr)
-        np.save('{}/{}_thresholds_{}.txt'.format(output_dirname, INDEX.zfill(4), i), withheld_thresholds)
+        np.save('{}/{}_fpr_{}.npy'.format(output_dirname, INDEX.zfill(4), i), withheld_fpr)
+        np.save('{}/{}_tpr_{}.npy'.format(output_dirname, INDEX.zfill(4), i), withheld_tpr)
+        np.save('{}/{}_thresholds_{}.npy'.format(output_dirname, INDEX.zfill(4), i), withheld_thresholds)
     np.savetxt('{}/{}_auc.txt'.format(output_dirname, INDEX.zfill(4)), withheld_aucs)
