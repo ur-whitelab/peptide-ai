@@ -35,10 +35,7 @@ INDEX = argv[4] # which iteration are we on, will be prefixed to filenames.
 regression = bool(int(argv[5]))
 TRAIN_ITERS_PER_SAMPLE = 50
 
-LEARNING_RATE = 0.001
-DEFAULT_DROPOUT_RATE = 0.0
 NRUNS = 50
-HIDDEN_LAYER_SIZE = 64
 
 if regression:
     positive_peps, positive_withheld_peps, labels, withheld_labels = load_data(positive_filename, regression, negative_filename)
@@ -76,52 +73,9 @@ pep_choice_indices = []
 
 final_withheld_predictions = None
 with tf.Session() as sess:
-    # peptide sequences input
-    # shape is [N_data_points, MAX_LENGTH, ALPHABET_SIZE], flexible in N_data_points
-    input_tensor = tf.placeholder(shape=np.array((None, MAX_LENGTH, ALPHABET_SIZE)),
-                                  dtype=tf.float64,
-                                  name='input')
-    labels_tensor = tf.placeholder(shape=(input_tensor.shape[0], labels.shape[1]),
-                                   dtype=tf.int32,
-                                   name='labels')
-    dropout_rate = tf.placeholder_with_default(tf.constant(DEFAULT_DROPOUT_RATE, dtype=tf.float64), shape=(), name='dropout_rate')
-    aa_counts = tf.reduce_sum(input_tensor, axis=1) # just add up the one-hots
-    convs = []
-    for hparam_pair in hyperparam_pairs:
-        convs.append(make_convolution(hparam_pair[0], hparam_pair[1], input_tensor))
-    classifier_conv_inputs = []
-    classifier_inputs = []
-    classifier_hidden_layers = []
-    classifier_outputs = []
-    for i, conv in enumerate(convs):
-        classifier_conv_inputs.append(
-            tf.nn.dropout(tf.layers.dense(conv,
-                                          HIDDEN_LAYER_SIZE,
-                                          activation=tf.nn.relu),
-                          rate=dropout_rate)
-        )
-        classifier_inputs.append(tf.concat([classifier_conv_inputs[i],
-                                            aa_counts],
-                                           1)
-        )
-        classifier_hidden_layers.append(tf.nn.dropout(tf.layers.dense(classifier_inputs[i],
-                                                                      HIDDEN_LAYER_SIZE,
-                                                                      activation=tf.nn.tanh),
-                                                      rate=dropout_rate)
-        )
-        # output is 2D: probabilities of 'has this property'/'does not have'
-        # easier to compare logits with one-hot labels this way
-        classifier_outputs.append(tf.layers.dense(classifier_hidden_layers[i],
-                                                  labels.shape[1],
-                                                  activation=tf.nn.softmax if not regression else tf.math.sigmoid))
-    # Instead of learner NN model, here we use uncertainty minimization
-    # loss in the classifiers is number of misclassifications
-    classifiers_losses = [tf.losses.absolute_difference(labels=labels_tensor,
-                                                        predictions=x) for x in classifier_outputs]
-    #[tf.losses.softmax_cross_entropy(onehot_labels=labels_tensor, logits=x) for x in classifier_outputs]
-    total_classifiers_loss = tf.reduce_sum(classifiers_losses) / float(len(classifiers_losses))
-    classifier_optimizer = tf.train.AdamOptimizer(learning_rate=LEARNING_RATE).minimize(total_classifiers_loss)
-
+    #construct the model
+    total_classifiers_loss, classifier_outputs, classifier_optimizer = build_model(labels, hyperparam_pairs, regression)
+    
     # here is where the sessions are set up and called
     sess.run(tf.global_variables_initializer())
     # get the initial losses
