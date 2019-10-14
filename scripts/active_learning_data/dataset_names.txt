@@ -7,3 +7,5 @@ antiparasital
 antiviral
 hemolytic
 soluble
+shp2
+tula2
