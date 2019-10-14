@@ -123,6 +123,12 @@ with tf.Session() as sess:
                                               'labels:0': withheld_labels,
                                               'dropout_rate:0': 0.0
                                           })
+    final_train_predictions = sess.run(classifier_outputs,
+                                       feed_dict={
+                                           'input:0': peps,
+                                           'labels:0': labels,
+                                           'dropout_rate:0': 0.0
+                                       })
 
 np.savetxt('{}/{}_train_losses.txt'.format(output_dirname, INDEX.zfill(4)), train_losses)
 np.savetxt('{}/{}_withheld_losses.txt'.format(output_dirname, INDEX.zfill(4)), withheld_losses)
@@ -148,3 +154,15 @@ if not regression:
         np.save('{}/{}_tpr_{}.npy'.format(output_dirname, INDEX.zfill(4), i), withheld_tpr)
         np.save('{}/{}_thresholds_{}.npy'.format(output_dirname, INDEX.zfill(4), i), withheld_thresholds)
     np.savetxt('{}/{}_auc.txt'.format(output_dirname, INDEX.zfill(4)), withheld_aucs)
+# for regression, instead rank the training set and record results.
+else:
+    final_predictions = []
+    for prediction in final_withheld_predictions:
+        final_predictions.append(prediction)
+    for prediction in final_train_predictions:
+        final_predictions.append(prediction)
+    output_peps = [item for item in withheld_peps]
+    for item in peps:
+        output_peps.append(item)
+    np.save('{}/{}_final_peps.npy'.format(output_dirname, INDEX.zfill(4)), output_peps)
+    np.save('{}/{}_final_predictions.npy'.format(output_dirname, INDEX.zfill(4)), final_predictions)

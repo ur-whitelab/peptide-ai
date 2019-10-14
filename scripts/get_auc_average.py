@@ -16,8 +16,12 @@ else:
 data = np.zeros(max_idx+1 - min_idx)
 
 for i in range(min_idx, max_idx+1):
-    point = np.genfromtxt('{}_auc.txt'.format(str(i).zfill(n_digits)))
-    data[i] += point
+    points = np.genfromtxt('{}_auc.txt'.format(str(i).zfill(n_digits)))
+    if len(points) > 1:
+        for point in points:
+            data[i] += point
+    else:
+        data[i] += points
 
 avg_auc = np.mean(data)
 stdev_auc = np.std(data)
