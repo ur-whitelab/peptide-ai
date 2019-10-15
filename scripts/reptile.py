@@ -4,35 +4,49 @@ from sys import argv
 import os
 import tensorflow as tf
 from utils import *
+import tqdm
+from active_learn import get_active_learner, evaluate_strategy
 
-'''This script takes in a directory that should be full of vectorized peptides,
-   which can be created from raw APD files via vectorize_peptides.py
-   It pads all peptide sequences out to a max length of 200, which is taken
-   from observing that the max length of a peptide in the APD dataset is 183.
-   Padding recommended by TF devs:
-   https://github.com/tensorflow/graphics/issues/2#issuecomment-497428806'''
-
-
+def inner_iter(sess, learner, k, labels, peps, strategy, swap_labels=True):
+    pep_choice_indices = []
+    if swap_labels and np.random.uniform() < 0.5:
+        labels[:,0] = 1 - labels[:,1]
+        labels[:,1] = 1 - labels[:,0]
+    output = learner.eval_labels(sess, peps)
+    for i in range(k):
+        if strategy is None:
+            loss = learner.train(sess, labels, peps, iters=5)[-1]
+        else:
+            chosen_idx = strategy(peps, output, False)
+            pep_choice_indices.append(chosen_idx)
+            # train for the chosen number of steps after each observation
+            # only append final training value
+            loss = learner.train(sess, labels[pep_choice_indices], peps[pep_choice_indices], iters=5)[-1]
+    return loss
 
 if __name__ == '__main__':
-    import sys 
-    if len(sys.argv) < 4:
-        print('reptile.py [data_root] [output] [withhold-index]')
+    import sys
+    if len(sys.argv) < 5:
+        print('reptile.py [data_root] [output_root] [withhold-index] [strategy]')
         exit()
     root = sys.argv[1]
-    output_dirname = sys.argv[2]
     withhold_index = int(sys.argv[3])
+    strategy_str = sys.argv[4]
+    output_dirname = '{}/{}/{}'.format(sys.argv[2], strategy_str, withhold_index)
+    os.makedirs(output_dirname, exist_ok=True)
     LEARNING_RATE = 0.01
     META_TRAIN_ITERS = 1500
     META_PERIOD = 25
+    META_INNER_SAMPLES = 5
+    META_VALIDATION_SAMPLES = 10
     eta = LEARNING_RATE
     # get data names
     with open(os.path.join(root, 'dataset_names.txt')) as f:
-        names = f.readlines()
+        dataset_names = f.readlines()
     # trim whitespace
-    names = [n.split()[0] for n in names]
+    dataset_names = [n.split()[0] for n in dataset_names]
     datasets = []
-    for n in names:
+    for n in dataset_names:
         positive_filename = os.path.join(root, '{}-sequence-vectors.npy'.format(n))
         negative_filename = os.path.join(root, '{}-fake-sequence-vectors.npy'.format(n))
         (labels, peps), (withheld_labels, withheld_peps) = prepare_data(positive_filename, negative_filename, False, withheld_percent=0)
@@ -40,9 +54,9 @@ if __name__ == '__main__':
 
     # withhold one dataset
     print('Withholding {}'.format(datasets[withhold_index][0]))
-    hyperparam_pairs = [(5, 6)]
+    strategy, hyperparam_pairs = get_active_learner(strategy_str)
     learner = Learner(labels.shape[1], hyperparam_pairs, False)
-    # get trainables from learner
+    # get trainables from learner + strategy
     to_train = tf.trainable_variables()
 
     # now create hyper version
@@ -68,28 +82,39 @@ if __name__ == '__main__':
                 if data_index != withhold_index:
                     break
             data =  datasets[data_index]
-            learner.train(sess, data[1], data[2])
+            inner_iter(sess, learner, META_INNER_SAMPLES, data[1], data[2], strategy)
             sess.run(update_hypers)
             sess.run(reset_vars)
-            # eval on withheld
+            # eval on withheld dataset
             data =  datasets[withhold_index]
-            losses = learner.train(sess, data[1], data[2])
-            previous_losses.append(losses[0])
-            del losses[0]
+            losses = inner_iter(sess, learner, META_INNER_SAMPLES, data[1], data[2], strategy)
+            previous_losses.append(losses)
+            del previous_losses[0]
             # reset so we don't save the training
             sess.run(reset_vars)
             if global_step % META_PERIOD == 0:
-                print('Loss on task {} is {}'.format(data[0], losses[-1]))
-                saver.save(sess, output_dirname + '/{}/model'.format(withhold_index), global_step=global_step)
+                saver.save(sess, output_dirname + '/model', global_step=global_step)
                 # check if still making progress
-                if min(previous_losses) < best:
-                    best = min(previous_losses)
-                    print('New best is {}'.format(best))
-                elif global_step > 250:
+                pmean = sum(previous_losses) / META_PERIOD
+                print('Mean validation loss on last period is', pmean)
+                if  pmean < best:
+                    best = pmean
+                    print('New mean best is {}'.format(best))
+                elif global_step > META_PERIOD * 5:
                     print('Failing to make progress')
                     break
         # get final training
         data =  datasets[withhold_index]
-        choice = np.random.choice(data[1].shape[0], 5, replace=False)
-        losses = learner.train(sess, data[1][choice], data[2][choice])
-        print('Loss on validation task {} is {}'.format(data[0], losses[-1]))
+        loss = inner_iter(sess, learner, META_INNER_SAMPLES, data[1], data[2], strategy)
+        print('Loss on validation task {} is {}'.format(data[0], loss))
+        sess.run(reset_vars)
+        print('running evaluation')
+        # need to reload in order to split validation data
+        n = dataset_names[withhold_index]
+        positive_filename = os.path.join(root, '{}-sequence-vectors.npy'.format(n))
+        negative_filename = os.path.join(root, '{}-fake-sequence-vectors.npy'.format(n))
+        (labels, peps), (withheld_labels, withheld_peps) = prepare_data(positive_filename, negative_filename, False)
+        for i in tqdm.tqdm(range(META_VALIDATION_SAMPLES)):
+            sess.run(reset_vars)
+            evaluate_strategy((labels, peps), (withheld_labels, withheld_peps), learner,
+                output_dirname, strategy=strategy, index=i, regression=False, sess=sess)
