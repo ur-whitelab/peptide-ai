@@ -38,7 +38,7 @@ if __name__ == '__main__':
     META_TRAIN_ITERS = 1500
     META_PERIOD = 25
     META_INNER_SAMPLES = 5
-    META_VALIDATION_SAMPLES = 10
+    META_VALIDATION_SAMPLES = 100
     eta = LEARNING_RATE
     # get data names
     with open(os.path.join(root, 'dataset_names.txt')) as f:

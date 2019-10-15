@@ -3,6 +3,7 @@ import pickle
 from sys import argv
 import tensorflow as tf
 from utils import *
+import os
 
 '''This script takes in a directory that should be full of vectorized peptides,
    which can be created from raw APD files via vectorize_peptides.py
@@ -65,36 +66,48 @@ def get_active_learner(strategy_str):
 
 def printHelp():
     print('usage: active_learn.py '
-          '[peptide_positive_vectors_file] '
-          '[peptide_negative_vectors_file] '
+          '[data_root] '
+          '[dataset_index] '
           '[output_dirname] '
           '[strategy {all, random, qbc, umin}]'
-          '[index]'
           '[regression: 0 or 1]'
-          '[load weights]'
           '(Use negative_vectors_file for activities file when doing regression.)')
     exit()
 
 
 if __name__ == '__main__':
-    if len(argv) < 6:
+    if len(argv) < 5:
         printHelp()
         exit(1)
 
-    positive_filename = argv[1] # positive example data is located here
-    negative_filename = argv[2] # negative example data is located here
+    root = argv[1] # location of data
+    dataset_choice = argv[2] # index of chosen dataset
     output_dirname = argv[3] # where to save the output
     strategy_str = argv[4]
-    index = argv[5] # which iteration are we on, will be prefixed to filenames.
     regression = False # default to not doing regression
-    if len(argv) > 6:
-        regression = bool(int(argv[6]))
-    load_weights = None
-    if len(argv) > 7:
-        load_weights = argv[7]
+    if len(argv) > 5:
+        regression = bool(int(argv[5]))
+    else:
+        regression = False
+    with open(os.path.join(root, 'dataset_names.txt')) as f:
+        dataset_names = f.readlines()
+    # trim whitespace
+    dataset_names = [n.split()[0] for n in dataset_names]
+    n = dataset_names[int(dataset_choice)]
+    positive_filename = os.path.join(root, '{}-sequence-vectors.npy'.format(n))
+    negative_filename = os.path.join(root, '{}-fake-sequence-vectors.npy'.format(n))
 
-    (labels, peps), (withheld_labels, withheld_peps) = prepare_data(positive_filename, negative_filename, regression)
     strategy, hyperparam_pairs = get_active_learner(strategy_str)
-    learner = Learner(labels.shape[1], hyperparam_pairs, regression)
-    evaluate_strategy((labels, peps), (withheld_labels, withheld_peps), learner,
-                   output_dirname, strategy=strategy, index=index, regression=regression)
+    learner = Learner(2, hyperparam_pairs, regression)
+
+    odir = os.path.join(output_dirname, strategy_str, dataset_choice)
+    os.makedirs(odir, exist_ok=True)
+    (labels, peps), (withheld_labels, withheld_peps) = prepare_data(positive_filename, negative_filename, regression)
+    nruns = 10
+    ntrajs = 100
+    if strategy is None:
+        nruns = 1000 # just go big
+        ntrajs = 1
+    for i in range(ntrajs):
+        evaluate_strategy((labels, peps), (withheld_labels, withheld_peps), learner,
+                   odir, strategy=strategy, nruns=nruns, index=i, regression=regression)

@@ -10,7 +10,7 @@ ALPHABET = ['A','R','N','D','C','Q','E','G','H','I', 'L','K','M','F','P','S','T'
 MAX_LENGTH = 200
 ALPHABET_SIZE = len(ALPHABET)
 HIDDEN_LAYER_SIZE = 64
-DEFAULT_DROPOUT_RATE = 0.0
+DEFAULT_DROPOUT_RATE = 0.1
 LEARNING_RATE = 0.001
 
 def shuffle_same_way(list_of_arrays):
@@ -187,6 +187,7 @@ def evaluate_strategy(train_data, withheld_data, learner, output_dirname, strate
     with tf.Session() if sess is None else sess.as_default() as _sess:
         # here is where the sessions are set up and called
         if sess is None:
+            print('Initializing variables')
             _sess.run(tf.global_variables_initializer())
         sess = _sess
         # do get initial loss
@@ -197,7 +198,9 @@ def evaluate_strategy(train_data, withheld_data, learner, output_dirname, strate
             output = learner.eval_labels(sess, peps)
             # make random selections for next training point.
             if strategy is None:
-                train_losses.append(learner.train(sess, labels, peps)[-1])
+                train_losses.append(learner.train(sess, labels, peps, iters=nruns)[-1])
+                withheld_losses.append(learner.eval_loss(sess, withheld_labels,     withheld_peps))
+                break
             else:
                 chosen_idx = strategy(peps, output, regression)
                 pep_choice_indices.append(chosen_idx)
