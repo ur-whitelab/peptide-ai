@@ -1,6 +1,8 @@
+import os
 import pickle
 import numpy as np
 import tensorflow as tf
+import random
 from vectorize_peptides import vectorize
 from tqdm import tqdm
 from sklearn.metrics import auc, roc_curve
@@ -143,15 +145,34 @@ class Learner:
             feed_dict={'input:0': peps, 'labels:0': labels, 'dropout_rate:0': 0.0})
 
 
-def prepare_data(positive_filename, negative_filename, regression, withheld_percent=0.2):
+def prepare_data(positive_filename, negative_filenames, regression, withheld_percent=0.2, weights = None):
+    # set-up weights
+    # not used yet
     # load randomly shuffled training data
     if regression:
+        raise NotImplementedError()
         positive_peps, positive_withheld_peps, labels, withheld_labels = load_data(positive_filename, regression, negative_filename, withheld_percent=withheld_percent)
     # negative dataset only needed if we're classifying
     else:
         positive_peps, positive_withheld_peps = load_data(positive_filename, regression, withheld_percent=withheld_percent)
-        negative_peps, negative_withheld_peps = load_data(negative_filename, regression, withheld_percent=withheld_percent)
-
+        if type(negative_filenames) != list:
+            negative_filenames = [negative_filenames]
+        negative_peps, negative_withheld_peps = [], []
+        for n, w in negative_filenames:
+            loaded = load_data(n, regression, withheld_percent=withheld_percent)
+            negative_peps.extend(loaded[0])
+            negative_withheld_peps.extend(loaded[1])
+        # now downsample without replacement
+        if len(negative_peps) < len(positive_peps):
+            print('Unable to find enough negative examples for {}'.format(positive_filename))
+            print('Using', *[n for n,w in negative_filenames])
+            exit(1)
+        negative_peps = random.sample(negative_peps, k=len(positive_peps))
+        negative_withheld_peps = random.sample(negative_withheld_peps, k=len(positive_withheld_peps))
+    # convert negative peps into array
+    # I still don't get numpy...
+    # why do I have to create a newaxis here? Isn't there an easier way?
+    negative_peps = np.concatenate([n[np.newaxis, :, :] for n in negative_peps], axis=0)
     peps = np.concatenate([positive_peps, negative_peps]) if not regression else positive_peps
     withheld_peps = np.concatenate([positive_withheld_peps, negative_withheld_peps]) if not regression else positive_withheld_peps
 
@@ -167,13 +188,57 @@ def prepare_data(positive_filename, negative_filename, regression, withheld_perc
     # now re-shuffle all these in the same way
     shuffle_same_way([labels, peps])
     shuffle_same_way([withheld_labels, withheld_peps])
-
     return (labels, peps), (withheld_labels, withheld_peps)
 
 
+def load_datasets(root, withheld_percent=0.2):
+    with open(os.path.join(root, 'dataset_names.txt')) as f:
+        dataset_names = f.readlines()
+    # trim whitespace
+    dataset_names = [n.split()[0] for n in dataset_names]
+    dataset_fakes = {n: [] for n in dataset_names}
+    with open(os.path.join(root, 'dataset_fakes.txt')) as f:
+        for line in f.readlines():
+            sline = line.split()
+            if sline[0][0] == '#':
+                continue
+            n = sline[0]
+            index = 1
+            while index < len(sline):
+                fn = sline[index]
+                if fn.find('fake') != -1:
+                    dataset_fakes[n].append(('{}-fake'.format(n), 'x'))
+                    break
+                dataset_fakes[n].append((sline[index], sline[index + 1]))
+                index += 2
+    datasets = []
+    for n in dataset_names:
+        pos = os.path.join(root, '{}-sequence-vectors.npy'.format(n))
+        negs = []
+        for nf, nw in dataset_fakes[n]:
+            negs.append((os.path.join(root, '{}-sequence-vectors.npy'.format(nf)), nw))
+        train, withheld = prepare_data(pos, negs, False, withheld_percent=withheld_percent)
+        datasets.append((n, train, withheld))
+    return datasets
+
+def project_peptides(name, seqs, *weights):
+    import sklearn.manifold
+    import sklearn.decomposition
+    import umap
+    import matplotlib.pyplot as plt
+    flat = np.reshape(seqs, (seqs.shape[0], -1))
+    embedded = umap.UMAP(min_dist=0.5, n_neighbors=50).fit_transform(flat)
+
+    for i,w in enumerate(weights):
+        plt.figure()
+        plt.title(name)
+        plt.scatter(embedded[:, 0], embedded[:,1], c=w, marker='.', s=3)
+        plt.colorbar()
+        plt.tight_layout()
+        plt.savefig('{}-{}-projection.png'.format(name, i), dpi=300)
 
 def evaluate_strategy(train_data, withheld_data, learner, output_dirname, strategy=None,
-                      nruns=10, index=0, regression=False, sess=None):
+                      nruns=10, index=0, regression=False, sess=None, plot_umap=False):
     peps = train_data[1]
     labels = train_data[0]
     withheld_peps = withheld_data[1]
@@ -213,13 +278,15 @@ def evaluate_strategy(train_data, withheld_data, learner, output_dirname, strate
         final_withheld_predictions = learner.eval_labels(sess, withheld_peps)
         final_train_predictions = learner.eval_labels(sess, peps)
 
+    if plot_umap:
+        project_peptides(os.path.join(output_dirname, str(index)), peps,  final_train_predictions[0][:,1],  labels[:,1])
     index = str(index) # make sure it's a string
     np.savetxt('{}/{}_train_losses.txt'.format(output_dirname, index.zfill(4)), train_losses)
     np.savetxt('{}/{}_withheld_losses.txt'.format(output_dirname, index.zfill(4)), withheld_losses)
     np.savetxt('{}/{}_choices.txt'.format(output_dirname, index.zfill(4)), pep_choice_indices)
 
     # can't do ROC for regression
-    if not regression:
+    if not regression and nruns > 0:
         # AUC analysis (misclassification) for final withheld predictions
         withheld_aucs = []
         withheld_fprs = []
@@ -239,7 +306,7 @@ def evaluate_strategy(train_data, withheld_data, learner, output_dirname, strate
             np.save('{}/{}_thresholds_{}.npy'.format(output_dirname, index.zfill(4), i), withheld_thresholds)
         np.savetxt('{}/{}_auc.txt'.format(output_dirname, index.zfill(4)), withheld_aucs)
     # for regression, instead rank the training set and record results.
-    else:
+    elif regression:
         final_predictions = []
         for prediction in final_withheld_predictions:
             final_predictions.append(prediction)

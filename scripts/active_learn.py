@@ -89,25 +89,23 @@ if __name__ == '__main__':
         regression = bool(int(argv[5]))
     else:
         regression = False
-    with open(os.path.join(root, 'dataset_names.txt')) as f:
-        dataset_names = f.readlines()
-    # trim whitespace
-    dataset_names = [n.split()[0] for n in dataset_names]
-    n = dataset_names[int(dataset_choice)]
-    positive_filename = os.path.join(root, '{}-sequence-vectors.npy'.format(n))
-    negative_filename = os.path.join(root, '{}-fake-sequence-vectors.npy'.format(n))
+    datasets = load_datasets(root)
+    name, (labels, peps), (withheld_labels, withheld_peps) = datasets[int(dataset_choice)]
 
     strategy, hyperparam_pairs = get_active_learner(strategy_str)
     learner = Learner(2, hyperparam_pairs, regression)
 
     odir = os.path.join(output_dirname, strategy_str, dataset_choice)
     os.makedirs(odir, exist_ok=True)
-    (labels, peps), (withheld_labels, withheld_peps) = prepare_data(positive_filename, negative_filename, regression)
     nruns = 10
-    ntrajs = 100
+    ntrajs = 10
     if strategy is None:
         nruns = 1000 # just go big
         ntrajs = 1
     for i in range(ntrajs):
+        # randomly swap labels
+        if np.random.uniform() < 0.5:
+            labels[:,0] = 1 - labels[:,1]
+            labels[:,1] = 1 - labels[:,0]
         evaluate_strategy((labels, peps), (withheld_labels, withheld_peps), learner,
                    odir, strategy=strategy, nruns=nruns, index=i, regression=regression)
