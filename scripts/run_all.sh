@@ -1,10 +1,10 @@
 
 
-#for i in {0..10}; do python active_learn.py active_learning_data $i models qbc; done;
-for i in {0..10}; do python active_learn.py active_learning_data $i models random; done;
-for i in {0..10}; do python active_learn.py active_learning_data $i models umin; done;
-for i in {0..10}; do python active_learn.py active_learning_data $i models all; done;
+#for i in {0..10}; do env TF_XLA_FLAGS=--tf_xla_cpu_global_jit python active_learn.py active_learning_data models $i qbc; done;
+for i in {0..10}; do env TF_XLA_FLAGS=--tf_xla_cpu_global_jit python active_learn.py active_learning_data models $i  random; done;
+for i in {0..10}; do env TF_XLA_FLAGS=--tf_xla_cpu_global_jit python active_learn.py active_learning_data models $i  umin; done;
+for i in {0..10}; do env TF_XLA_FLAGS=--tf_xla_cpu_global_jit python active_learn.py active_learning_data models $i  all; done;
 
-for i in {0..10}; do python reptile.py active_learning_data reptile-weights $i umin; done;
-for i in {0..10}; do python reptile.py active_learning_data reptile-weights $i random; done;
+for i in {0..10}; do env TF_XLA_FLAGS=--tf_xla_cpu_global_jit python reptile.py active_learning_data reptile-models $i umin; done;
+for i in {0..10}; do env TF_XLA_FLAGS=--tf_xla_cpu_global_jit python reptile.py active_learning_data reptile-models $i random; done;
 #for i in {0..10}; do python reptile.py active_learning_data reptile-weights $i qbc; done;

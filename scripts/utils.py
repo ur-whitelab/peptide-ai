@@ -4,7 +4,6 @@ import numpy as np
 import tensorflow as tf
 import random
 from vectorize_peptides import vectorize
-from tqdm import tqdm
 from sklearn.metrics import auc, roc_curve
 
 ALPHABET = ['A','R','N','D','C','Q','E','G','H','I', 'L','K','M','F','P','S','T','W','Y','V']
@@ -67,7 +66,7 @@ def make_convolution(motif_width, num_classes, input_tensor):
     output = tf.math.reduce_max(conv, axis=1)
     return output
 
-def build_model(label_width, hyperparam_pairs, regression):
+def build_model(label_width, hyperparam_pairs, regression, learning_rate=LEARNING_RATE):
     input_tensor = tf.placeholder(shape=np.array((None, MAX_LENGTH, ALPHABET_SIZE)),
                                   dtype=tf.float64,
                                   name='input')
@@ -110,18 +109,28 @@ def build_model(label_width, hyperparam_pairs, regression):
                                                         predictions=x) for x in classifier_outputs]
     #[tf.losses.softmax_cross_entropy(onehot_labels=labels_tensor, logits=x) for x in classifier_outputs]
     total_classifiers_loss = tf.reduce_sum(classifiers_losses) / float(len(classifiers_losses))
-    classifier_optimizer = tf.train.AdamOptimizer(learning_rate=LEARNING_RATE).minimize(total_classifiers_loss)
-    return [total_classifiers_loss, classifier_outputs, classifier_optimizer]
+    # join classifiers
+    full_labels = tf.concat([x[tf.newaxis, :, :] for x in classifier_outputs], axis=0)
+    # get majority vote
+    # get avg prediction, take hard max, then compare
+    votes = tf.math.round(tf.reduce_mean(full_labels, axis=0))
+    # [0, 1] - [1, 0] = [-1, 1] -> abs sum is 2, so divide by 2
+    FPR = tf.reduce_sum(tf.abs(votes - tf.cast(labels_tensor, tf.float64))) / 2.0
+    accuracy = 1 - FPR / tf.cast(tf.shape(labels_tensor)[0], tf.float64)
+    classifier_optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate).minimize(total_classifiers_loss)
+    return [total_classifiers_loss, classifier_outputs, classifier_optimizer, accuracy]
 
 class Learner:
-    def __init__(self, label_width, hyperparam_pairs, regression=False):
+    def __init__(self, label_width, hyperparam_pairs, regression=False, learning_rate=LEARNING_RATE):
         model_vars = build_model(
                 label_width,
                 hyperparam_pairs,
-                regression)
+                regression,
+                learning_rate)
         self.total_classifiers_loss = model_vars[0]
         self.classifier_outputs = model_vars[1]
         self.classifier_optimizer = model_vars[2]
+        self.accuracy = model_vars[3]
 
     def train(self, sess, labels, peps, iters=5, batch_size=5, replacement=True):
         losses = [0 for _ in range(iters)]
@@ -134,6 +143,10 @@ class Learner:
 
     def eval_loss(self, sess, labels, peps):
         return self.eval(sess, labels, peps)[0]
+
+    def eval_accuracy(self, sess, labels, peps):
+        return sess.run(self.accuracy,
+            feed_dict={'input:0': peps, 'labels:0':labels, 'dropout_rate:0': 0.0})
 
     def eval_labels(self, sess, peps):
         return sess.run(self.classifier_outputs,
@@ -245,34 +258,32 @@ def evaluate_strategy(train_data, withheld_data, learner, output_dirname, strate
     withheld_labels = withheld_data[0]
 
     train_losses = []
-    withheld_losses = []
+    withheld_accuracy = []
     pep_choice_indices = []
 
 
     with tf.Session() if sess is None else sess.as_default() as _sess:
         # here is where the sessions are set up and called
         if sess is None:
-            print('Initializing variables')
             _sess.run(tf.global_variables_initializer())
         sess = _sess
         # do get initial loss
-        withheld_losses.append(learner.eval_loss(sess, withheld_labels, withheld_peps))
+        withheld_accuracy.append(learner.eval_accuracy(sess, withheld_labels, withheld_peps))
         for i in range(nruns):
             # run the classifiers on all available peptides to get their outputs
-            # then pick the one with the highest variance (p*(1-p)) to train with
+            # then pick the one according to the strategy
             output = learner.eval_labels(sess, peps)
             # make random selections for next training point.
             if strategy is None:
                 train_losses.append(learner.train(sess, labels, peps, iters=nruns)[-1])
-                withheld_losses.append(learner.eval_loss(sess, withheld_labels,     withheld_peps))
+                withheld_accuracy.append(learner.eval_accuracy(sess, withheld_labels,     withheld_peps))
                 break
-            else:
-                chosen_idx = strategy(peps, output, regression)
-                pep_choice_indices.append(chosen_idx)
-                # train for the chosen number of steps after each observation
-                # only append final training value
-                train_losses.append(learner.train(sess, labels[pep_choice_indices], peps[pep_choice_indices])[-1])
-            withheld_losses.append(learner.eval_loss(sess, withheld_labels, withheld_peps))
+            chosen_idx = strategy(peps, output, regression)
+            pep_choice_indices.append(chosen_idx)
+            # train for the chosen number of steps after each observation
+            # only append final training value
+            train_losses.append(learner.train(sess, labels[pep_choice_indices], peps[pep_choice_indices])[-1])
+            withheld_accuracy.append(learner.eval_accuracy(sess, withheld_labels, withheld_peps))
 
         # now that training is done, get final withheld predictions
         final_withheld_predictions = learner.eval_labels(sess, withheld_peps)
@@ -282,7 +293,7 @@ def evaluate_strategy(train_data, withheld_data, learner, output_dirname, strate
         project_peptides(os.path.join(output_dirname, str(index)), peps,  final_train_predictions[0][:,1],  labels[:,1])
     index = str(index) # make sure it's a string
     np.savetxt('{}/{}_train_losses.txt'.format(output_dirname, index.zfill(4)), train_losses)
-    np.savetxt('{}/{}_withheld_losses.txt'.format(output_dirname, index.zfill(4)), withheld_losses)
+    np.savetxt('{}/{}_withheld_accuracy.txt'.format(output_dirname, index.zfill(4)), withheld_accuracy)
     np.savetxt('{}/{}_choices.txt'.format(output_dirname, index.zfill(4)), pep_choice_indices)
 
     # can't do ROC for regression

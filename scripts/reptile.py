@@ -7,11 +7,12 @@ from utils import *
 import tqdm
 from active_learn import get_active_learner, evaluate_strategy
 
-LEARNING_RATE = 0.01
+LEARNING_RATE = 1e-2
 META_TRAIN_ITERS = 1500
-META_PERIOD = 5
+META_PERIOD = 25
 META_INNER_SAMPLES = 5
 META_VALIDATION_SAMPLES = 10
+META_VALIDATION_LENGTH = 10
 LABEL_DIMENSION = 2
 TEST_ZERO_SHOT = False
 
@@ -20,8 +21,8 @@ def inner_iter(sess, learner, k, labels, peps, strategy, swap_labels=True):
     pep_choice_indices = []
     if swap_labels and np.random.uniform() < 0.5:
         swapped_labels = np.zeros_like(labels)
-        swapped_labels[:,0] = 1 - labels[:,1]
-        swapped_labels[:,1] = 1 - labels[:,0]
+        swapped_labels[:,0] = 1 - labels[:,0]
+        swapped_labels[:,1] = 1 - labels[:,1]
         labels = swapped_labels
     output = learner.eval_labels(sess, peps)
     for i in range(k):
@@ -51,14 +52,14 @@ if __name__ == '__main__':
     # withhold one dataset
     print('Withholding {}'.format(datasets[withhold_index][0]))
     strategy, hyperparam_pairs = get_active_learner(strategy_str)
-    # label dimension 2
-    learner = Learner(LABEL_DIMENSION, hyperparam_pairs, False)
+    learner = Learner(LABEL_DIMENSION, hyperparam_pairs, False, 0.01)
     # get trainables from learner + strategy
     to_train = tf.trainable_variables()
 
     # now create hyper version
     hyper_trains = [tf.get_variable(shape=v.shape, dtype=v.dtype, name='hyper-{}'.format(v.name.split(':')[0])) for  v in to_train]
-    update_hypers = tf.group(*[h.assign(v * eta + (1 - eta) * v) for h,v in zip(hyper_trains, to_train)])
+    update_hypers = tf.train.AdagradOptimizer(eta).apply_gradients([(h - v, h) for h,v in zip(hyper_trains, to_train)])
+    #update_hypers = tf.group(*[h.assign(v * eta + (1 - eta) * v) for h,v in zip(hyper_trains, to_train)])
     reset_vars = tf.group(*[v.assign(h) for h,v in zip(hyper_trains, to_train)])
 
     saver = tf.train.Saver(hyper_trains)
@@ -112,7 +113,7 @@ if __name__ == '__main__':
             # zero shot with swapped labels
             for i in range(1,3): #iter over train/withheld
                     for j in range(2): #iter over class
-                        datasets[withhold_index][i][1][:,j] = 1 - datasets[withhold_index][i][1][:,j]
+                        datasets[withhold_index][i][0][:,j] = 1 - datasets[withhold_index][i][0][:,j]
             evaluate_strategy(datasets[withhold_index][1], datasets[withhold_index][2], learner,
                     output_dirname, strategy=strategy, index=1, nruns=0, regression=False, sess=sess, plot_umap=True)
         for index in tqdm.tqdm(range(META_VALIDATION_SAMPLES)):
@@ -120,6 +121,7 @@ if __name__ == '__main__':
             # swap labels around
             for i in range(1,3): #iter over train/withheld
                 for j in range(2): #iter over class
-                    datasets[withhold_index][i][1][:,j] = 1 - datasets[withhold_index][i][1][:,j]
+                    #        dataset index t/v lab
+                    datasets[withhold_index][i][0][:,j] = 1 - datasets[withhold_index][i][0][:,j]
             evaluate_strategy(datasets[withhold_index][1], datasets[withhold_index][2], learner,
-                output_dirname, strategy=strategy, index=index, regression=False, sess=sess)
+                output_dirname, strategy=strategy, index=index, nruns=META_VALIDATION_LENGTH, regression=False, sess=sess)

@@ -6,7 +6,8 @@ antiHIV shp2 xx tula2 xx insoluble xxx antifungal x antiHIV x anticancer x antip
 antiMRSA shp2 xx tula2 xx insoluble xxx antiHIV x anticancer x antiparasital x fake
 antiparasital shp2 xx tula2 xx insoluble xxx antiHIV x anticancer x fake
 antiviral shp2 xx tula2 xx insoluble xxx antifungal x anticancer x antiparasital x antibacterial x fake
-hemolytic shp2 xx tula2 xx insoluble xxx fake
+hemolytic shp2 xx tula2 xx insoluble xxx human xx fake
 soluble insoluble x
 shp2 fake
 tula2 fake
+human insoluble xxx hemolytic xx fake

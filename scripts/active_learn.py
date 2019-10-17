@@ -1,5 +1,6 @@
 import numpy as np
 import pickle
+import tqdm
 from sys import argv
 import tensorflow as tf
 from utils import *
@@ -67,8 +68,8 @@ def get_active_learner(strategy_str):
 def printHelp():
     print('usage: active_learn.py '
           '[data_root] '
-          '[dataset_index] '
           '[output_dirname] '
+          '[dataset_index] '
           '[strategy {all, random, qbc, umin}]'
           '[regression: 0 or 1]'
           '(Use negative_vectors_file for activities file when doing regression.)')
@@ -81,8 +82,8 @@ if __name__ == '__main__':
         exit(1)
 
     root = argv[1] # location of data
-    dataset_choice = argv[2] # index of chosen dataset
-    output_dirname = argv[3] # where to save the output
+    output_dirname = argv[2] # where to save the output
+    dataset_choice = argv[3] # index of chosen dataset
     strategy_str = argv[4]
     regression = False # default to not doing regression
     if len(argv) > 5:
@@ -100,12 +101,14 @@ if __name__ == '__main__':
     nruns = 10
     ntrajs = 10
     if strategy is None:
-        nruns = 1000 # just go big
+        nruns = 10000 # just go big
         ntrajs = 1
-    for i in range(ntrajs):
+    for i in tqdm.tqdm(range(ntrajs)):
         # randomly swap labels
         if np.random.uniform() < 0.5:
-            labels[:,0] = 1 - labels[:,1]
-            labels[:,1] = 1 - labels[:,0]
+            labels[:,0] = 1 - labels[:,0]
+            labels[:,1] = 1 - labels[:,1]
+            withheld_labels[:,0] = 1 - withheld_labels[:,0]
+            withheld_labels[:,1] = 1 - withheld_labels[:,1]
         evaluate_strategy((labels, peps), (withheld_labels, withheld_peps), learner,
                    odir, strategy=strategy, nruns=nruns, index=i, regression=regression)

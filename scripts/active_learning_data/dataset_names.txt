@@ -9,3 +9,4 @@ hemolytic
 soluble
 shp2
 tula2
+human
