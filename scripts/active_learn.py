@@ -99,7 +99,7 @@ if __name__ == '__main__':
     odir = os.path.join(output_dirname, strategy_str, dataset_choice)
     os.makedirs(odir, exist_ok=True)
     nruns = 10
-    ntrajs = 10
+    ntrajs = 250
     if strategy is None:
         nruns = 10000 # just go big
         ntrajs = 1
