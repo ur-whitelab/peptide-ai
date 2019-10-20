@@ -234,19 +234,36 @@ def load_datasets(root, withheld_percent=0.2):
         datasets.append((n, train, withheld))
     return datasets
 
-def project_peptides(name, seqs, *weights):
+def project_peptides(name, seqs, weights, cmap=None, labels=None):
     import sklearn.manifold
     import sklearn.decomposition
     import umap
     import matplotlib.pyplot as plt
+    if cmap is None:
+        cmap = plt.get_cmap('viridis')
+    if type(weights[0]) != list:
+        weights = [weights]
     flat = np.reshape(seqs, (seqs.shape[0], -1))
-    embedded = umap.UMAP(min_dist=0.5, n_neighbors=50).fit_transform(flat)
+    assert flat.shape[0] == len(weights[0])
+    pca = sklearn.decomposition.PCA(40)
+    seqs_pca = pca.fit_transform(flat)
+    features = seqs_pca
+    embedded = sklearn.manifold.TSNE(n_components=2).fit_transform(features)
+    #embedded = umap.UMAP(min_dist=0.1,  n_neighbors=50).fit_transform(flat)
 
     for i,w in enumerate(weights):
-        plt.figure()
-        plt.title(name)
-        plt.scatter(embedded[:, 0], embedded[:,1], c=w, marker='.', s=3)
-        plt.colorbar()
+        plt.figure(figsize=(7,4))
+        if labels is None:
+            plt.title(name)
+        plt.scatter(embedded[:, 0], embedded[:,1], c=w, s=0.5, edgecolors='face', linewidth=0.0, cmap=cmap, alpha=1.0)
+        plt.setp(plt.gca(), xticks=[], yticks=[])
+        if labels is None:
+            plt.colorbar()
+        else:
+            uw = np.sort(np.unique(w))
+            cbar = plt.colorbar(boundaries=np.arange(len(labels))-0.5)
+            cbar.set_ticks(np.arange(len(labels)))
+            cbar.set_ticklabels(labels)
         plt.tight_layout()
         plt.savefig('{}-{}-projection.png'.format(name, i), dpi=300)
 
@@ -290,7 +307,7 @@ def evaluate_strategy(train_data, withheld_data, learner, output_dirname, strate
         final_train_predictions = learner.eval_labels(sess, peps)
 
     if plot_umap:
-        project_peptides(os.path.join(output_dirname, str(index)), peps,  final_train_predictions[0][:,1],  labels[:,1])
+        project_peptides(os.path.join(output_dirname, str(index)), peps,  [final_train_predictions[0][:,1],  labels[:,1]])
     index = str(index) # make sure it's a string
     np.savetxt('{}/{}_train_losses.txt'.format(output_dirname, index.zfill(4)), train_losses)
     np.savetxt('{}/{}_withheld_accuracy.txt'.format(output_dirname, index.zfill(4)), withheld_accuracy)
