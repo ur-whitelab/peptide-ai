@@ -9,7 +9,7 @@ from active_learn import get_active_learner, evaluate_strategy
 
 LEARNING_RATE = 1e-2
 META_TRAIN_ITERS = 1500
-META_PERIOD = 50
+META_PERIOD = 500
 META_INNER_SAMPLES = 5
 META_VALIDATION_SAMPLES = 250
 META_VALIDATION_LENGTH = 10
