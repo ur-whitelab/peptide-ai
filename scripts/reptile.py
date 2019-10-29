@@ -15,9 +15,10 @@ META_VALIDATION_SAMPLES = 250
 META_VALIDATION_LENGTH = 10
 LABEL_DIMENSION = 2
 TEST_ZERO_SHOT = False
+SWAP_LABELS = True
 
 
-def inner_iter(sess, learner, k, labels, peps, strategy, swap_labels=True):
+def inner_iter(sess, learner, k, labels, peps, strategy, swap_labels=SWAP_LABELS):
     pep_choice_indices = []
     if swap_labels and np.random.uniform() < 0.5:
         swapped_labels = np.zeros_like(labels)
@@ -111,17 +112,19 @@ if __name__ == '__main__':
             evaluate_strategy(datasets[withhold_index][1], datasets[withhold_index][2], learner,
                     output_dirname, strategy=strategy, index=0, nruns=0, regression=False, sess=sess, plot_umap=True)
             # zero shot with swapped labels
-            for i in range(1,3): #iter over train/withheld
-                    for j in range(2): #iter over class
-                        datasets[withhold_index][i][0][:,j] = 1 - datasets[withhold_index][i][0][:,j]
+            if SWAP_LABELS:
+                for i in range(1,3): #iter over train/withheld
+                        for j in range(2): #iter over class
+                            datasets[withhold_index][i][0][:,j] = 1 - datasets[withhold_index][i][0][:,j]
             evaluate_strategy(datasets[withhold_index][1], datasets[withhold_index][2], learner,
                     output_dirname, strategy=strategy, index=1, nruns=0, regression=False, sess=sess, plot_umap=True)
         for index in tqdm.tqdm(range(META_VALIDATION_SAMPLES)):
             sess.run(reset_vars)
             # swap labels around
-            for i in range(1,3): #iter over train/withheld
-                for j in range(2): #iter over class
-                    #        dataset index t/v lab
-                    datasets[withhold_index][i][0][:,j] = 1 - datasets[withhold_index][i][0][:,j]
+            if SWAP_LABELS:
+                for i in range(1,3): #iter over train/withheld
+                    for j in range(2): #iter over class
+                        #        dataset index t/v lab
+                        datasets[withhold_index][i][0][:,j] = 1 - datasets[withhold_index][i][0][:,j]
             evaluate_strategy(datasets[withhold_index][1], datasets[withhold_index][2], learner,
                 output_dirname, strategy=strategy, index=index, nruns=META_VALIDATION_LENGTH, regression=False, sess=sess)

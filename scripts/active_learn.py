@@ -43,6 +43,7 @@ def umin_strategy(peps, est_labels, regression):
     variances = [item[0] * item[1] for item in est_labels[0]]
     var_sum = np.sum(variances)
     chosen_idx = np.random.choice(range(len(peps)), p=[(item/var_sum) for item in variances])
+    #chosen_idx = np.argmax(variances)
     return chosen_idx
 
 def get_active_learner(strategy_str):
@@ -99,16 +100,12 @@ if __name__ == '__main__':
     odir = os.path.join(output_dirname, strategy_str, dataset_choice)
     os.makedirs(odir, exist_ok=True)
     nruns = 10
-    ntrajs = 250
+    ntrajs = 25#0
+    batch_size = 5
     if strategy is None:
-        nruns = 10000 # just go big
-        ntrajs = 1
+        nruns = 1024 # just go big
+        ntrajs = 16
+        batch_size = 32
     for i in tqdm.tqdm(range(ntrajs)):
-        # randomly swap labels
-        if np.random.uniform() < 0.5:
-            labels[:,0] = 1 - labels[:,0]
-            labels[:,1] = 1 - labels[:,1]
-            withheld_labels[:,0] = 1 - withheld_labels[:,0]
-            withheld_labels[:,1] = 1 - withheld_labels[:,1]
         evaluate_strategy((labels, peps), (withheld_labels, withheld_peps), learner,
-                   odir, strategy=strategy, nruns=nruns, index=i, regression=regression)
+                   odir, strategy=strategy, nruns=nruns, index=i, regression=regression, batch_size=batch_size)

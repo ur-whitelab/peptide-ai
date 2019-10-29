@@ -11,8 +11,10 @@ ALPHABET = ['A','R','N','D','C','Q','E','G','H','I', 'L','K','M','F','P','S','T'
 MAX_LENGTH = 200
 ALPHABET_SIZE = len(ALPHABET)
 HIDDEN_LAYER_SIZE = 64
+HIDDEN_LAYER_NUMBER = 3
 DEFAULT_DROPOUT_RATE = 0.1
-LEARNING_RATE = 0.001
+LEARNING_RATE = 1e-4
+ACTIVATION = tf.nn.tanh
 
 def shuffle_same_way(list_of_arrays):
     rng_state = np.random.get_state()
@@ -47,90 +49,96 @@ def load_data(filename, regression=False, labels_filename=None, withheld_percent
                    np.reshape(withheld_labels, [len(withheld_labels), 1])]
     return retval
 
-def make_convolution(motif_width, num_classes, input_tensor):
-    data_tensor = input_tensor
-    filter_tensor = tf.Variable(np.random.random([motif_width,# filter width
-                                                  ALPHABET_SIZE,# in channels
-                                                  num_classes]),# out channels
-                                name='filter_{}_width_{}_classes'.format(
-                                    motif_width,
-                                    num_classes),
-                                dtype=tf.float64)
-    conv = tf.nn.conv1d(data_tensor,
-                        filter_tensor,
-                        padding='SAME', # keep the dimensions of output the same
-                        stride=1, # look at each residue
-                        name='convolution_{}_width_{}_classes'.format(
-                            motif_width,
-                            num_classes))
-    output = tf.math.reduce_max(conv, axis=1)
-    return output
-
-def build_model(label_width, hyperparam_pairs, regression, learning_rate=LEARNING_RATE):
-    input_tensor = tf.placeholder(shape=np.array((None, MAX_LENGTH, ALPHABET_SIZE)),
-                                  dtype=tf.float64,
-                                  name='input')
-    labels_tensor = tf.placeholder(shape=(input_tensor.shape[0], label_width),
-                                   dtype=tf.int32,
-                                   name='labels')
-    dropout_rate = tf.placeholder_with_default(tf.constant(DEFAULT_DROPOUT_RATE, dtype=tf.float64), shape=(), name='dropout_rate')
-    aa_counts = tf.reduce_sum(input_tensor, axis=1) # just add up the one-hots
-    convs = []
-    for hparam_pair in hyperparam_pairs:
-        convs.append(make_convolution(hparam_pair[0], hparam_pair[1], input_tensor))
-    classifier_conv_inputs = []
-    classifier_inputs = []
-    classifier_hidden_layers = []
-    classifier_outputs = []
-    for i, conv in enumerate(convs):
-        classifier_conv_inputs.append(
-            tf.nn.dropout(tf.layers.dense(conv,
-                                          HIDDEN_LAYER_SIZE,
-                                          activation=tf.nn.relu),
-                          rate=dropout_rate)
-        )
-        classifier_inputs.append(tf.concat([classifier_conv_inputs[i],
-                                            aa_counts],
-                                           1)
-        )
-        classifier_hidden_layers.append(tf.nn.dropout(tf.layers.dense(classifier_inputs[i],
-                                                                      HIDDEN_LAYER_SIZE,
-                                                                      activation=tf.nn.tanh),
-                                                      rate=dropout_rate)
-        )
-        # output is 2D: probabilities of 'has this property'/'does not have'
-        # easier to compare logits with one-hot labels this way
-        classifier_outputs.append(tf.layers.dense(classifier_hidden_layers[i],
-                                                  label_width,
-                                                  activation=tf.nn.softmax if not regression else tf.math.sigmoid))
-    # Instead of learner NN model, here we use uncertainty minimization
-    # loss in the classifiers is number of misclassifications
-    classifiers_losses = [tf.losses.absolute_difference(labels=labels_tensor,
-                                                        predictions=x) for x in classifier_outputs]
-    #[tf.losses.softmax_cross_entropy(onehot_labels=labels_tensor, logits=x) for x in classifier_outputs]
-    total_classifiers_loss = tf.reduce_sum(classifiers_losses) / float(len(classifiers_losses))
-    # join classifiers
-    full_labels = tf.concat([x[tf.newaxis, :, :] for x in classifier_outputs], axis=0)
-    # get majority vote
-    # get avg prediction, take hard max, then compare
-    votes = tf.math.round(tf.reduce_mean(full_labels, axis=0))
-    # [0, 1] - [1, 0] = [-1, 1] -> abs sum is 2, so divide by 2
-    FPR = tf.reduce_sum(tf.abs(votes - tf.cast(labels_tensor, tf.float64))) / 2.0
-    accuracy = 1 - FPR / tf.cast(tf.shape(labels_tensor)[0], tf.float64)
-    classifier_optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate).minimize(total_classifiers_loss)
-    return [total_classifiers_loss, classifier_outputs, classifier_optimizer, accuracy]
-
 class Learner:
     def __init__(self, label_width, hyperparam_pairs, regression=False, learning_rate=LEARNING_RATE):
-        model_vars = build_model(
+        self.filter_tensors = []
+        model_vars = self.build_model(
                 label_width,
                 hyperparam_pairs,
                 regression,
                 learning_rate)
-        self.total_classifiers_loss = model_vars[0]
-        self.classifier_outputs = model_vars[1]
-        self.classifier_optimizer = model_vars[2]
-        self.accuracy = model_vars[3]
+
+    def make_convolution(self,motif_width, num_classes, input_tensor):
+        data_tensor = input_tensor
+        self.filter_tensors.append(tf.Variable(np.random.random([motif_width,# filter width
+                                                    ALPHABET_SIZE,# in channels
+                                                    num_classes]),# out channels
+                                    name='filter_{}_width_{}_classes'.format(
+                                        motif_width,
+                                        num_classes),
+                                    dtype=tf.float64))
+        conv = tf.nn.conv1d(data_tensor,
+                            self.filter_tensors[-1],
+                            padding='SAME', # keep the dimensions of output the same
+                            stride=1, # look at each residue
+                            name='convolution_{}_width_{}_classes'.format(
+                                motif_width,
+                                num_classes))
+        output = tf.math.reduce_max(conv, axis=1)
+
+        # This is for examining features.
+        self.cov_features = tf.math.argmax(self.filter_tensors[-1], axis=1)
+
+        return output
+
+    def build_model(self, label_width, hyperparam_pairs, regression, learning_rate=LEARNING_RATE):
+        input_tensor = tf.placeholder(shape=np.array((None, MAX_LENGTH, ALPHABET_SIZE)),
+                                    dtype=tf.float64,
+                                    name='input')
+        labels_tensor = tf.placeholder(shape=(input_tensor.shape[0], label_width),
+                                    dtype=tf.int32,
+                                    name='labels')
+        dropout_rate = tf.placeholder_with_default(tf.constant(DEFAULT_DROPOUT_RATE, dtype=tf.float64), shape=(), name='dropout_rate')
+        #0-1 length of peptide followed by avg of each amino acid
+        aa_counts = tf.concat([tf.reshape(tf.reduce_sum(input_tensor, axis=[1,2]) / float(MAX_LENGTH), [-1, 1]), tf.reduce_mean(input_tensor, axis=1)], axis=1)
+        convs = []
+        for hparam_pair in hyperparam_pairs:
+            convs.append(self.make_convolution(hparam_pair[0], hparam_pair[1], input_tensor))
+        classifier_inputs = []
+        classifier_hidden_layers = []
+        self.classifier_outputs = []
+        for i, conv in enumerate(convs):
+            classifier_inputs.append(tf.concat([conv,
+                                                aa_counts],
+                                            axis=1)
+            )
+            x = tf.nn.dropout(tf.layers.dense(classifier_inputs[i],
+                                            HIDDEN_LAYER_SIZE,
+                                            activation=ACTIVATION),
+                            rate=dropout_rate)
+            for _ in range(HIDDEN_LAYER_NUMBER - 1):
+                x = tf.nn.dropout(tf.layers.dense(x,
+                                            HIDDEN_LAYER_SIZE,
+                                            activation=ACTIVATION),
+                                rate=dropout_rate) + x
+            classifier_hidden_layers.append(x)
+            # output is 2D: probabilities of 'has this property'/'does not have'
+            # easier to compare logits with one-hot labels this way
+            self.classifier_outputs.append(tf.layers.dense(classifier_hidden_layers[i],
+                                                    label_width,
+                                                    activation=tf.nn.softmax if not regression else tf.math.sigmoid))
+        # Instead of learner NN model, here we use uncertainty minimization
+        # loss in the classifiers is number of misclassifications
+        classifiers_losses = [tf.losses.absolute_difference(labels=labels_tensor,
+                                                            predictions=x) for x in self.classifier_outputs]
+        #[tf.losses.softmax_cross_entropy(onehot_labels=labels_tensor, logits=x) for x in classifier_outputs]
+        self.total_classifiers_loss = tf.reduce_sum(classifiers_losses) / float(len(classifiers_losses))
+        # join classifiers
+        full_labels = tf.concat([x[tf.newaxis, :, :] for x in self.classifier_outputs], axis=0)
+        # get majority vote
+        # get avg prediction, take hard max, then compare
+        votes = tf.math.round(tf.reduce_mean(full_labels, axis=0))
+        # [0, 1] - [1, 0] = [-1, 1] -> abs sum is 2, so divide by 2
+        FPR = tf.reduce_sum(tf.abs(votes - tf.cast(labels_tensor, tf.float64))) / 2.0
+        self.accuracy = 1 - FPR / tf.cast(tf.shape(labels_tensor)[0], tf.float64)
+        self.classifier_optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate).minimize(self.total_classifiers_loss)
+
+        # for interpretation - only use last model (most hyperparameters)
+        # we're getting partial (via stop_gradients) of positive label probability wrt aa_counts.
+        count_grads = tf.gradients(self.classifier_outputs[-1][:,1], aa_counts, stop_gradients=aa_counts)
+        # sum over batches (0) and ys (len = 1, axis = 1)
+        # should be left with gradient of length aa_counts
+        self.count_grads = tf.reduce_sum(count_grads, axis=[0, 1])
 
     def train(self, sess, labels, peps, iters=5, batch_size=5, replacement=True):
         losses = [0 for _ in range(iters)]
@@ -156,6 +164,14 @@ class Learner:
         return sess.run(
             [self.total_classifiers_loss, self.classifier_outputs],
             feed_dict={'input:0': peps, 'labels:0': labels, 'dropout_rate:0': 0.0})
+
+    def eval_motifs(self, sess):
+        return sess.run(self.cov_features)
+
+    def eval_count_grad(self, sess, peps):
+        return sess.run(
+            self.count_grads,
+            feed_dict={'input:0': peps, 'dropout_rate:0': 0.0})
 
 
 def prepare_data(positive_filename, negative_filenames, regression, withheld_percent=0.2, weights = None):
@@ -234,7 +250,7 @@ def load_datasets(root, withheld_percent=0.2):
         datasets.append((n, train, withheld))
     return datasets
 
-def project_peptides(name, seqs, weights, cmap=None, labels=None):
+def project_peptides(name, seqs, weights, cmap=None, labels=None, ax=None, colorbar=True):
     import sklearn.manifold
     import sklearn.decomposition
     import umap
@@ -249,26 +265,37 @@ def project_peptides(name, seqs, weights, cmap=None, labels=None):
     seqs_pca = pca.fit_transform(flat)
     features = seqs_pca
     embedded = sklearn.manifold.TSNE(n_components=2).fit_transform(features)
-    #embedded = umap.UMAP(min_dist=0.1,  n_neighbors=50).fit_transform(flat)
+    #embedded = umap.UMAP(min_dist=0.1,  n_neighbors=8).fit_transform(flat, y=weights[0])
+    #embedded = umap.UMAP(min_dist=0.1,  n_neighbors=8).fit_transform(flat)
 
     for i,w in enumerate(weights):
-        plt.figure(figsize=(7,4))
-        if labels is None:
-            plt.title(name)
-        plt.scatter(embedded[:, 0], embedded[:,1], c=w, s=0.5, edgecolors='face', linewidth=0.0, cmap=cmap, alpha=1.0)
-        plt.setp(plt.gca(), xticks=[], yticks=[])
-        if labels is None:
-            plt.colorbar()
+        if ax is None:
+            plt.figure(figsize=(7,4))
+            _ax = plt.gca()
         else:
-            uw = np.sort(np.unique(w))
-            cbar = plt.colorbar(boundaries=np.arange(len(labels))-0.5)
-            cbar.set_ticks(np.arange(len(labels)))
-            cbar.set_ticklabels(labels)
-        plt.tight_layout()
-        plt.savefig('{}-{}-projection.png'.format(name, i), dpi=300)
+            _ax = ax
+        if name is not None:
+            _ax.set_title(name)
+        if len(seqs) > 2000:
+            s = 1.0
+        else:
+            s = 3
+        sc = _ax.scatter(embedded[:, 0], embedded[:,1], c=w, s=s, edgecolors='face', linewidth=0.0, cmap=cmap, alpha=0.8)
+        plt.setp(_ax, xticks=[], yticks=[])
+        if colorbar:
+            if labels is None:
+                plt.colorbar()
+            else:
+                uw = np.sort(np.unique(w))
+                cbar = plt.colorbar(boundaries=np.arange(len(labels))-0.5)
+                cbar.set_ticks(np.arange(len(labels)))
+                cbar.set_ticklabels(labels)
+        if ax is None:
+            plt.tight_layout()
+            plt.savefig('{}-{}-projection.png'.format(name, i), dpi=300)
 
 def evaluate_strategy(train_data, withheld_data, learner, output_dirname, strategy=None,
-                      nruns=10, index=0, regression=False, sess=None, plot_umap=False):
+                      nruns=10, index=0, regression=False, sess=None, plot_umap=False, batch_size=5):
     peps = train_data[1]
     labels = train_data[0]
     withheld_peps = withheld_data[1]
@@ -292,19 +319,21 @@ def evaluate_strategy(train_data, withheld_data, learner, output_dirname, strate
             output = learner.eval_labels(sess, peps)
             # make random selections for next training point.
             if strategy is None:
-                train_losses.append(learner.train(sess, labels, peps, iters=nruns)[-1])
-                withheld_accuracy.append(learner.eval_accuracy(sess, withheld_labels,     withheld_peps))
+                train_losses.append(learner.train(sess, labels, peps, batch_size=batch_size, iters=nruns)[-1])
+                withheld_accuracy.append(learner.eval_accuracy(sess, withheld_labels, withheld_peps))
                 break
             chosen_idx = strategy(peps, output, regression)
             pep_choice_indices.append(chosen_idx)
             # train for the chosen number of steps after each observation
             # only append final training value
-            train_losses.append(learner.train(sess, labels[pep_choice_indices], peps[pep_choice_indices])[-1])
+            train_losses.append(learner.train(sess, labels[pep_choice_indices], peps[pep_choice_indices], batch_size=batch_size)[-1])
             withheld_accuracy.append(learner.eval_accuracy(sess, withheld_labels, withheld_peps))
 
         # now that training is done, get final withheld predictions
         final_withheld_predictions = learner.eval_labels(sess, withheld_peps)
         final_train_predictions = learner.eval_labels(sess, peps)
+        motifs = learner.eval_motifs(sess)
+        count_grads = learner.eval_count_grad(sess, withheld_peps)
 
     if plot_umap:
         project_peptides(os.path.join(output_dirname, str(index)), peps,  [final_train_predictions[0][:,1],  labels[:,1]])
@@ -312,6 +341,9 @@ def evaluate_strategy(train_data, withheld_data, learner, output_dirname, strate
     np.savetxt('{}/{}_train_losses.txt'.format(output_dirname, index.zfill(4)), train_losses)
     np.savetxt('{}/{}_withheld_accuracy.txt'.format(output_dirname, index.zfill(4)), withheld_accuracy)
     np.savetxt('{}/{}_choices.txt'.format(output_dirname, index.zfill(4)), pep_choice_indices)
+    np.savetxt('{}/{}_motifs.txt'.format(output_dirname, index.zfill(4)), motifs)
+    np.savetxt('{}/{}_count_grads.txt'.format(output_dirname, index.zfill(4)), count_grads)
+
 
     # can't do ROC for regression
     if not regression and nruns > 0:

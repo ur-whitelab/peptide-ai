@@ -1,43 +1,21 @@
 from utils import *
 import numpy as np
 import matplotlib.pyplot as plt
+import tqdm
 
-data_names = [
-    'antibacterial',
-    'anticancer',
-    'antifungal',
-    'antiHIV',
-    'antiMRSA',
-    'antiparasital',
-    'antiviral',
-    'hemolytic',
-    'soluble',
-    'shp2',
-    'tula2',
-    'human',
-    'antibacterial-fake',
-    'anticancer-fake',
-    'antifungal-fake',
-    'antiHIV-fake',
-    'antiMRSA-fake',
-    'antiparasital-fake',
-    'antiviral-fake',
-    'hemolytic-fake',
-    'insoluble',
-    'shp2-fake',
-    'tula2-fake',
-    'human-fake']
+datasets = load_datasets('active_learning_data/', withheld_percent=0.01)
+fig, axs= plt.subplots(nrows=3, ncols=4, figsize=(14,8), sharex=True, sharey=False)
 
-seqs = []
-labels = []
-for i,n in enumerate(data_names):
-    s, _ = load_data(os.path.join('active_learning_data', '{}-sequence-vectors.npy'.format(n)), withheld_percent=0.0)
-    #s = s[:100]
-    seqs.append(s)
-    labels.extend([i] * len(s))
-
-seqs = np.concatenate(seqs, axis=0)
-lengths = np.sum(seqs, axis=(1,2))
-print(lengths.shape)
-seqs = seqs / lengths[:, np.newaxis, np.newaxis]
-project_peptides('all', seqs, labels, plt.get_cmap('Spectral'), labels=data_names)
+with tqdm.tqdm(total = 3 * 4) as pbar:
+    for i in range(3):
+        for j in range(4):
+            k = i * 4 + j
+            pbar.update(1)
+            name, (labels, peps), _ = datasets[k]
+            project_peptides(name, peps, [np.argmax(x) for x in labels],
+                plt.get_cmap('coolwarm'),
+                labels=['active', 'inactive'],
+                ax=axs[i,j],
+                colorbar = False)
+plt.tight_layout()
+plt.savefig('mannifold_subs.png', dpi=300)
