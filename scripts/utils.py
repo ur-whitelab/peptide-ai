@@ -12,9 +12,9 @@ MAX_LENGTH = 200
 ALPHABET_SIZE = len(ALPHABET)
 HIDDEN_LAYER_SIZE = 64
 HIDDEN_LAYER_NUMBER = 3
-DEFAULT_DROPOUT_RATE = 0.1
-LEARNING_RATE = 1e-4
-ACTIVATION = tf.nn.tanh
+DEFAULT_DROPOUT_RATE = 0.0
+MODEL_LEARNING_RATE = 1e-3
+ACTIVATION = tf.nn.relu
 
 def shuffle_same_way(list_of_arrays):
     rng_state = np.random.get_state()
@@ -50,7 +50,7 @@ def load_data(filename, regression=False, labels_filename=None, withheld_percent
     return retval
 
 class Learner:
-    def __init__(self, label_width, hyperparam_pairs, regression=False, learning_rate=LEARNING_RATE):
+    def __init__(self, label_width, hyperparam_pairs, regression=False, learning_rate=MODEL_LEARNING_RATE):
         self.filter_tensors = []
         model_vars = self.build_model(
                 label_width,
@@ -81,7 +81,7 @@ class Learner:
 
         return output
 
-    def build_model(self, label_width, hyperparam_pairs, regression, learning_rate=LEARNING_RATE):
+    def build_model(self, label_width, hyperparam_pairs, regression, learning_rate=MODEL_LEARNING_RATE):
         input_tensor = tf.placeholder(shape=np.array((None, MAX_LENGTH, ALPHABET_SIZE)),
                                     dtype=tf.float64,
                                     name='input')
@@ -91,6 +91,7 @@ class Learner:
         dropout_rate = tf.placeholder_with_default(tf.constant(DEFAULT_DROPOUT_RATE, dtype=tf.float64), shape=(), name='dropout_rate')
         #0-1 length of peptide followed by avg of each amino acid
         aa_counts = tf.concat([tf.reshape(tf.reduce_sum(input_tensor, axis=[1,2]) / float(MAX_LENGTH), [-1, 1]), tf.reduce_mean(input_tensor, axis=1)], axis=1)
+        #aa_counts = tf.concat([tf.reshape(tf.reduce_sum(input_tensor, axis=[1,2]), [-1, 1]), tf.reduce_sum(input_tensor, axis=1)], axis=1)
         convs = []
         for hparam_pair in hyperparam_pairs:
             convs.append(self.make_convolution(hparam_pair[0], hparam_pair[1], input_tensor))
@@ -140,10 +141,13 @@ class Learner:
         # should be left with gradient of length aa_counts
         self.count_grads = tf.reduce_sum(count_grads, axis=[0, 1])
 
-    def train(self, sess, labels, peps, iters=5, batch_size=5, replacement=True):
+    def train(self, sess, labels, peps, iters=5, batch_size=5, replacement=False):
         losses = [0 for _ in range(iters)]
+        # only go as many iters as we have data (heuristic)
+        iters = min(iters, peps.shape[0])
         for i in range(iters):
-            indices = np.random.choice(peps.shape[0], batch_size, replace=replacement)
+            # prevent not having unique elements by minning batch size with peps.shape
+            indices = np.random.choice(peps.shape[0], min(peps.shape[0], batch_size), replace=replacement)
             losses[i], _ = sess.run(
                 [self.total_classifiers_loss, self.classifier_optimizer],
                 feed_dict={'input:0': peps[indices], 'labels:0': labels[indices]})
@@ -173,6 +177,19 @@ class Learner:
             self.count_grads,
             feed_dict={'input:0': peps, 'dropout_rate:0': 0.0})
 
+
+
+def mix_split(peps, labels, withheld_percent=0.2):
+    all_peps = np.concatenate(peps, axis=0)
+    all_labels = np.concatenate(labels, axis=0)
+    stop_idx = int(len(all_peps) * (1 - withheld_percent))
+    train_peps = all_peps[:stop_idx]
+    withheld_peps = all_peps[stop_idx:]
+    train_labels = all_labels[:stop_idx]
+    withheld_labels = all_labels[stop_idx:]
+    shuffle_same_way([train_peps, train_labels])
+    shuffle_same_way([withheld_peps, withheld_labels])
+    return (train_labels, train_peps), (withheld_labels, withheld_peps)
 
 def prepare_data(positive_filename, negative_filenames, regression, withheld_percent=0.2, weights = None):
     # set-up weights

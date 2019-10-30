@@ -16,14 +16,17 @@ import os
 def random_strategy(peps, est_labels, regression):
     return np.random.randint(0, len(peps))
 
-def qbc_class_strategy(peps, est_labels):
+def qbc_class_strategy(peps, est_labels, stochastic=True):
     raw_variances = np.array([[item[0] * item[1] for item in predictions_arr] for predictions_arr in est_labels])
     variances = np.mean(raw_variances, axis=0)
     var_sum = np.sum(variances)
     probs_arr = variances/var_sum
     # now choose randomly, weighted by how much the models disagree
     # using len(peps) here ensures our probs arr is correct length
-    chosen_idx = np.random.choice(range(len(peps)), p=probs_arr)
+    if stochastic:
+        chosen_idx = np.random.choice(range(len(peps)), p=probs_arr)
+    else:
+        chosen_idx = np.argmax(probs_arr)
     return chosen_idx
 
 def qbc_regress_strategy(peps, est_labels):
@@ -39,22 +42,25 @@ def qbc_strategy(peps, est_labels, regression):
         return qbc_regress_strategy(peps, est_labels)
     return qbc_class_strategy(peps, est_labels)
 
-def umin_strategy(peps, est_labels, regression):
+def umin_strategy(peps, est_labels, regression, stochastic=True):
     variances = [item[0] * item[1] for item in est_labels[0]]
     var_sum = np.sum(variances)
-    chosen_idx = np.random.choice(range(len(peps)), p=[(item/var_sum) for item in variances])
-    #chosen_idx = np.argmax(variances)
+    if stochastic:
+        chosen_idx = np.random.choice(range(len(peps)), p=[(item/var_sum) for item in variances])
+    else:
+        chosen_idx = np.argmax(variances)
     return chosen_idx
 
-def get_active_learner(strategy_str):
+def get_active_learner(strategy_str, stochastic=True):
     hyperparam_pairs = []
     if strategy_str == 'qbc':
+        strategy = lambda p, l, r: qbc_strategy(p, l, r, stochastic)
         strategy = qbc_strategy
         for i in range(3,6):
             for j in range(3, 6):
                 hyperparam_pairs.append((i, j))
     elif strategy_str == 'umin':
-        strategy = umin_strategy
+        strategy = lambda p, l, r: umin_strategy(p, l, r, stochastic)
     elif strategy_str == 'random':
         strategy = random_strategy
     elif strategy_str == 'all':
@@ -99,13 +105,15 @@ if __name__ == '__main__':
 
     odir = os.path.join(output_dirname, strategy_str, dataset_choice)
     os.makedirs(odir, exist_ok=True)
-    nruns = 10
-    ntrajs = 25#0
+    nruns = 50
+    ntrajs = 30
     batch_size = 5
     if strategy is None:
         nruns = 1024 # just go big
         ntrajs = 16
         batch_size = 32
     for i in tqdm.tqdm(range(ntrajs)):
+        # re-split data
+        (labels, peps), (withheld_labels, withheld_peps) = mix_split([peps, withheld_peps], [labels, withheld_labels])
         evaluate_strategy((labels, peps), (withheld_labels, withheld_peps), learner,
                    odir, strategy=strategy, nruns=nruns, index=i, regression=regression, batch_size=batch_size)
