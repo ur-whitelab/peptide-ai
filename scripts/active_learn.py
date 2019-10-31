@@ -105,12 +105,12 @@ if __name__ == '__main__':
 
     odir = os.path.join(output_dirname, strategy_str, dataset_choice)
     os.makedirs(odir, exist_ok=True)
-    nruns = 50
+    nruns = 25
     ntrajs = 30
     batch_size = 5
     if strategy is None:
-        nruns = 1024 # just go big
-        ntrajs = 16
+        nruns = 4000 # just go big
+        ntrajs = 1
         batch_size = 32
     for i in tqdm.tqdm(range(ntrajs)):
         # re-split data

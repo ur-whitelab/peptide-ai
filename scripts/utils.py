@@ -11,10 +11,9 @@ ALPHABET = ['A','R','N','D','C','Q','E','G','H','I', 'L','K','M','F','P','S','T'
 MAX_LENGTH = 200
 ALPHABET_SIZE = len(ALPHABET)
 HIDDEN_LAYER_SIZE = 64
-HIDDEN_LAYER_NUMBER = 3
+HIDDEN_LAYER_NUMBER = 2
 DEFAULT_DROPOUT_RATE = 0.0
 MODEL_LEARNING_RATE = 1e-3
-ACTIVATION = tf.nn.relu
 
 def shuffle_same_way(list_of_arrays):
     rng_state = np.random.get_state()
@@ -90,38 +89,33 @@ class Learner:
                                     name='labels')
         dropout_rate = tf.placeholder_with_default(tf.constant(DEFAULT_DROPOUT_RATE, dtype=tf.float64), shape=(), name='dropout_rate')
         #0-1 length of peptide followed by avg of each amino acid
-        aa_counts = tf.concat([tf.reshape(tf.reduce_sum(input_tensor, axis=[1,2]) / float(MAX_LENGTH), [-1, 1]), tf.reduce_mean(input_tensor, axis=1)], axis=1)
+        aa_counts =  tf.concat([tf.reshape(tf.reduce_sum(input_tensor, axis=[1,2]) / float(MAX_LENGTH), [-1, 1]), tf.reduce_mean(input_tensor, axis=1)], axis=1)
+        #aa_counts = MAX_LENGTH * tf.concat([tf.reshape(tf.reduce_sum(input_tensor, axis=[1,2]) / float(MAX_LENGTH), [-1, 1]), tf.reduce_mean(input_tensor, axis=1)], axis=1)
         #aa_counts = tf.concat([tf.reshape(tf.reduce_sum(input_tensor, axis=[1,2]), [-1, 1]), tf.reduce_sum(input_tensor, axis=1)], axis=1)
         convs = []
         for hparam_pair in hyperparam_pairs:
             convs.append(self.make_convolution(hparam_pair[0], hparam_pair[1], input_tensor))
-        classifier_inputs = []
-        classifier_hidden_layers = []
+        classifiers_losses = []
+        logits = []
         self.classifier_outputs = []
         for i, conv in enumerate(convs):
-            classifier_inputs.append(tf.concat([conv,
-                                                aa_counts],
-                                            axis=1)
-            )
-            x = tf.nn.dropout(tf.layers.dense(classifier_inputs[i],
+            features = tf.concat([conv,aa_counts], axis=1)
+            x0 = tf.nn.dropout(tf.layers.dense(features,
                                             HIDDEN_LAYER_SIZE,
-                                            activation=ACTIVATION),
+                                            activation=tf.nn.tanh),
                             rate=dropout_rate)
+            x = x0
             for _ in range(HIDDEN_LAYER_NUMBER - 1):
                 x = tf.nn.dropout(tf.layers.dense(x,
                                             HIDDEN_LAYER_SIZE,
-                                            activation=ACTIVATION),
-                                rate=dropout_rate) + x
-            classifier_hidden_layers.append(x)
+                                            activation=tf.nn.relu),
+                                rate=dropout_rate)
+            logits = tf.layers.dense(x, label_width)
+            classifiers_losses.append(tf.losses.softmax_cross_entropy(onehot_labels=labels_tensor,logits=logits))
             # output is 2D: probabilities of 'has this property'/'does not have'
             # easier to compare logits with one-hot labels this way
-            self.classifier_outputs.append(tf.layers.dense(classifier_hidden_layers[i],
-                                                    label_width,
-                                                    activation=tf.nn.softmax if not regression else tf.math.sigmoid))
+            self.classifier_outputs.append(tf.nn.softmax(logits))
         # Instead of learner NN model, here we use uncertainty minimization
-        # loss in the classifiers is number of misclassifications
-        classifiers_losses = [tf.losses.absolute_difference(labels=labels_tensor,
-                                                            predictions=x) for x in self.classifier_outputs]
         #[tf.losses.softmax_cross_entropy(onehot_labels=labels_tensor, logits=x) for x in classifier_outputs]
         self.total_classifiers_loss = tf.reduce_sum(classifiers_losses) / float(len(classifiers_losses))
         # join classifiers
@@ -350,7 +344,10 @@ def evaluate_strategy(train_data, withheld_data, learner, output_dirname, strate
         final_withheld_predictions = learner.eval_labels(sess, withheld_peps)
         final_train_predictions = learner.eval_labels(sess, peps)
         motifs = learner.eval_motifs(sess)
-        count_grads = learner.eval_count_grad(sess, withheld_peps)
+        # make poly-alanine
+        polyalanine = np.zeros((1,MAX_LENGTH, ALPHABET_SIZE))
+        polyalanine[0, :10, 0] = 1.0
+        count_grads = learner.eval_count_grad(sess, polyalanine)
 
     if plot_umap:
         project_peptides(os.path.join(output_dirname, str(index)), peps,  [final_train_predictions[0][:,1],  labels[:,1]])
