@@ -52,7 +52,7 @@ if __name__ == '__main__':
     datasets = load_datasets(root)
     # withhold one dataset
     print('Withholding {}'.format(datasets[withhold_index][0]))
-    strategy, hyperparam_pairs = get_active_learner(strategy_str, stochastic=False)
+    strategy, hyperparam_pairs = get_active_learner(strategy_str, stochastic=True)
     learner = Learner(LABEL_DIMENSION, hyperparam_pairs, False, MODEL_LEARNING_RATE)
     # get trainables from learner + strategy
     to_train = tf.trainable_variables()

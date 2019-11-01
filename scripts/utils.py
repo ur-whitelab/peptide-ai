@@ -111,12 +111,12 @@ class Learner:
                                             activation=tf.nn.relu),
                                 rate=dropout_rate)
             logits = tf.layers.dense(x, label_width)
+            self.classifier_outputs.append(tf.nn.softmax(logits))
             classifiers_losses.append(tf.losses.softmax_cross_entropy(onehot_labels=labels_tensor,logits=logits))
+            #classifiers_losses.append(tf.losses.absolute_difference( labels_tensor, self.classifier_outputs[-1]))
             # output is 2D: probabilities of 'has this property'/'does not have'
             # easier to compare logits with one-hot labels this way
-            self.classifier_outputs.append(tf.nn.softmax(logits))
         # Instead of learner NN model, here we use uncertainty minimization
-        #[tf.losses.softmax_cross_entropy(onehot_labels=labels_tensor, logits=x) for x in classifier_outputs]
         self.total_classifiers_loss = tf.reduce_sum(classifiers_losses) / float(len(classifiers_losses))
         # join classifiers
         full_labels = tf.concat([x[tf.newaxis, :, :] for x in self.classifier_outputs], axis=0)
