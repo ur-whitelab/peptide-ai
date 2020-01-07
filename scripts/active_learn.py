@@ -1,6 +1,5 @@
 import numpy as np
 import pickle
-import tqdm
 from sys import argv
 import tensorflow as tf
 from utils import *
@@ -12,6 +11,8 @@ import os
    from observing that the max length of a peptide in the APD dataset is 183.
    Padding recommended by TF devs:
    https://github.com/tensorflow/graphics/issues/2#issuecomment-497428806'''
+
+DEFAULT_CONVOLUTION_HYPERPARAMS = (5,6)
 
 def random_strategy(peps, est_labels, regression):
     return np.random.randint(0, len(peps))
@@ -51,7 +52,7 @@ def umin_strategy(peps, est_labels, regression, stochastic=True):
         chosen_idx = np.argmax(variances)
     return chosen_idx
 
-def get_active_learner(strategy_str, stochastic=True):
+def get_active_learner(strategy_str, stochastic=True, convolution_params=None):
     hyperparam_pairs = []
     if strategy_str == 'qbc':
         strategy = lambda p, l, r: qbc_strategy(p, l, r, stochastic)
@@ -69,7 +70,10 @@ def get_active_learner(strategy_str, stochastic=True):
         print('Unknown strategy ', strategy_str)
         printHelp()
         exit(1)
-    hyperparam_pairs.append((5,6))
+    if convolution_params is None:
+        hyperparam_pairs.append(DEFAULT_CONVOLUTION_HYPERPARAMS)
+    else:
+        hyperparam_pairs.append(convolution_params)
     return strategy, hyperparam_pairs
 
 def printHelp():
@@ -95,12 +99,15 @@ if __name__ == '__main__':
     regression = False # default to not doing regression
     if len(argv) > 5:
         regression = bool(int(argv[5]))
+        if len(argv) > 6:
+            convolution_params = (int(argv[6]), int(argv[7]))
     else:
         regression = False
+        convolution_params = None
     datasets = load_datasets(root)
     name, (labels, peps), (withheld_labels, withheld_peps) = datasets[int(dataset_choice)]
 
-    strategy, hyperparam_pairs = get_active_learner(strategy_str)
+    strategy, hyperparam_pairs = get_active_learner(strategy_str, convolution_params=convolution_params)
     learner = Learner(2, hyperparam_pairs, regression)
 
     odir = os.path.join(output_dirname, strategy_str, dataset_choice)
@@ -109,8 +116,8 @@ if __name__ == '__main__':
     ntrajs = 30
     batch_size = 5
     if strategy is None:
-        nruns = 4000 # just go big
-        ntrajs = 1
+        nruns = 1000000 # just go big
+        ntrajs = 10
         batch_size = 32
     for i in tqdm.tqdm(range(ntrajs)):
         # re-split data
