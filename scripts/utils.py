@@ -365,23 +365,27 @@ def evaluate_strategy(train_data, withheld_data, learner, output_dirname, strate
     # can't do ROC for regression
     if not regression and nruns > 0:
         # AUC analysis (misclassification) for final withheld predictions
-        withheld_aucs = []
-        withheld_fprs = []
-        withheld_tprs = []
-        withheld_thresholds = []
         # iterate over all models
-        for i, predictions_arr in enumerate(final_withheld_predictions):
-            withheld_fpr, withheld_tpr, withheld_threshold = roc_curve(withheld_labels[:,0],
-                                                                        predictions_arr[:,0])
-            withheld_fprs.append(withheld_fpr)
-            withheld_tprs.append(withheld_tpr)
-            withheld_thresholds.append(withheld_threshold)
-            withheld_auc = auc(withheld_fpr, withheld_tpr)
-            withheld_aucs.append(withheld_auc)
-            np.save('{}/{}_fpr_{}.npy'.format(output_dirname, index.zfill(4), i), withheld_fpr)
-            np.save('{}/{}_tpr_{}.npy'.format(output_dirname, index.zfill(4), i), withheld_tpr)
-            np.save('{}/{}_thresholds_{}.npy'.format(output_dirname, index.zfill(4), i), withheld_thresholds)
-        np.savetxt('{}/{}_auc.txt'.format(output_dirname, index.zfill(4)), withheld_aucs)
+        if len(final_withheld_predictions) == 1:
+            #not qbc
+            predictions_arr = final_withheld_predictions[0]
+        else:
+            #in qbc, do average of committee predictions for AUC
+            predictions_arrs = []
+            for predictions_arr in final_withheld_predictions:
+                predictions_arrs.append(predictions_arr)
+            print('predictions_arrs is now {} with shapes:'.format(predictions_arrs))
+            for predictions_arr in predictions_arrs:
+                print(predictions_arr.shape)
+            predictions_arr = np.mean(np.array(predictions_arrs), axis=0)
+            print('predictions arr shape: {}'.format(predictions_arr.shape))
+        withheld_fpr, withheld_tpr, withheld_threshold = roc_curve(withheld_labels[:,0],
+                                                                   predictions_arr[:,0])
+        np.save('{}/{}_fpr.npy'.format(output_dirname, index.zfill(4)), withheld_fpr)
+        np.save('{}/{}_tpr.npy'.format(output_dirname, index.zfill(4)), withheld_tpr)
+        np.save('{}/{}_thresholds.npy'.format(output_dirname, index.zfill(4)), withheld_threshold)
+        withheld_auc = auc(withheld_fpr, withheld_tpr)
+        np.savetxt('{}/{}_auc.txt'.format(output_dirname, index.zfill(4)), [withheld_auc])
     # for regression, instead rank the training set and record results.
     elif regression:
         final_predictions = []
