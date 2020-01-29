@@ -12,7 +12,7 @@ META_TRAIN_ITERS = 2000
 META_PERIOD = 50
 META_INNER_SAMPLES = 5
 META_VALIDATION_SAMPLES = 30
-META_VALIDATION_LENGTH = 25
+META_VALIDATION_LENGTH = 10
 LABEL_DIMENSION = 2
 TEST_ZERO_SHOT = True
 SWAP_LABELS = True
@@ -28,13 +28,13 @@ def inner_iter(sess, learner, k, labels, peps, strategy, swap_labels=SWAP_LABELS
     output = learner.eval_labels(sess, peps)
     for i in range(k):
         if strategy is None:
-            loss = learner.train(sess, labels, peps, iters=5)[-1]
+            loss = learner.train(sess, labels, peps)[-1]
         else:
             chosen_idx = strategy(peps, output, False)
             pep_choice_indices.append(chosen_idx)
             # train for the chosen number of steps after each observation
             # only append final training value
-            loss = learner.train(sess, labels[pep_choice_indices], peps[pep_choice_indices], iters=5)[-1]
+            loss = learner.train(sess, labels[pep_choice_indices], peps[pep_choice_indices])[-1]
     return loss
 
 if __name__ == '__main__':

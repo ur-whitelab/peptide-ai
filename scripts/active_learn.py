@@ -4,6 +4,7 @@ from sys import argv
 import tensorflow as tf
 from utils import *
 import os
+import tqdm
 
 '''This script takes in a directory that should be full of vectorized peptides,
    which can be created from raw APD files via vectorize_peptides.py
@@ -12,7 +13,7 @@ import os
    Padding recommended by TF devs:
    https://github.com/tensorflow/graphics/issues/2#issuecomment-497428806'''
 
-DEFAULT_CONVOLUTION_HYPERPARAMS = (5,6)
+DEFAULT_CONVOLUTION_HYPERPARAMS = (6,6)# found to give best performance overall
 
 def random_strategy(peps, est_labels, regression):
     return np.random.randint(0, len(peps))
@@ -112,9 +113,9 @@ if __name__ == '__main__':
 
     odir = os.path.join(output_dirname, strategy_str, dataset_choice)
     os.makedirs(odir, exist_ok=True)
-    nruns = 25
+    nruns = 10
     ntrajs = 30
-    batch_size = 5
+    batch_size = 16
     if strategy is None:
         nruns = 1000000 # just go big
         ntrajs = 10
