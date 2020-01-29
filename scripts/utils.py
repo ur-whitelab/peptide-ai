@@ -11,9 +11,10 @@ ALPHABET = ['A','R','N','D','C','Q','E','G','H','I', 'L','K','M','F','P','S','T'
 MAX_LENGTH = 200
 ALPHABET_SIZE = len(ALPHABET)
 HIDDEN_LAYER_SIZE = 64
-HIDDEN_LAYER_NUMBER = 2
+HIDDEN_LAYER_NUMBER = 3
 DEFAULT_DROPOUT_RATE = 0.0
 MODEL_LEARNING_RATE = 1e-3
+DEFAULT_TRAIN_ITERS = 16
 
 def shuffle_same_way(list_of_arrays):
     rng_state = np.random.get_state()
@@ -73,7 +74,7 @@ class Learner:
                             name='convolution_{}_width_{}_classes'.format(
                                 motif_width,
                                 num_classes))
-        output = tf.math.reduce_max(conv, axis=1)
+        output = tf.math.reduce_mean(conv, axis=1)
 
         # This is for examining features.
         self.cov_features = tf.math.argmax(self.filter_tensors[-1], axis=1)
@@ -105,11 +106,12 @@ class Learner:
                                             activation=tf.nn.tanh),
                             rate=dropout_rate)
             x = x0
-            for _ in range(HIDDEN_LAYER_NUMBER - 1):
-                x = tf.nn.dropout(tf.layers.dense(x,
-                                            HIDDEN_LAYER_SIZE,
-                                            activation=tf.nn.relu),
-                                rate=dropout_rate)
+            for j in range(HIDDEN_LAYER_NUMBER):
+                    x = tf.nn.dropout(tf.layers.dense(x,
+                                                      HIDDEN_LAYER_SIZE,
+                                                      activation=tf.nn.relu),
+                                      rate=dropout_rate)
+            # x is now the final layer
             logits = tf.layers.dense(x, label_width)
             self.classifier_outputs.append(tf.nn.softmax(logits))
             classifiers_losses.append(tf.losses.softmax_cross_entropy(onehot_labels=labels_tensor,logits=logits))
@@ -121,7 +123,7 @@ class Learner:
         # join classifiers
         full_labels = tf.concat([x[tf.newaxis, :, :] for x in self.classifier_outputs], axis=0)
         # get majority vote
-        # get avg prediction, take hard max, then compare
+        # get avg prediction, take mean, then compare
         votes = tf.math.round(tf.reduce_mean(full_labels, axis=0))
         # [0, 1] - [1, 0] = [-1, 1] -> abs sum is 2, so divide by 2
         FPR = tf.reduce_sum(tf.abs(votes - tf.cast(labels_tensor, tf.float64))) / 2.0
@@ -135,13 +137,14 @@ class Learner:
         # should be left with gradient of length aa_counts
         self.count_grads = tf.reduce_sum(count_grads, axis=[0, 1])
 
-    def train(self, sess, labels, peps, iters=5, batch_size=5, replacement=False):
+    def train(self, sess, labels, peps, iters=DEFAULT_TRAIN_ITERS, batch_size=16, replacement=False):
         losses = [0 for _ in range(iters)]
         # only go as many iters as we have data (heuristic)
         iters = min(iters, peps.shape[0])
         for i in range(iters):
             # prevent not having unique elements by minning batch size with peps.shape
             indices = np.random.choice(peps.shape[0], min(peps.shape[0], batch_size), replace=replacement)
+            # train with dropout
             losses[i], _ = sess.run(
                 [self.total_classifiers_loss, self.classifier_optimizer],
                 feed_dict={'input:0': peps[indices], 'labels:0': labels[indices]})
@@ -306,7 +309,7 @@ def project_peptides(name, seqs, weights, cmap=None, labels=None, ax=None, color
             plt.savefig('{}-{}-projection.png'.format(name, i), dpi=300)
 
 def evaluate_strategy(train_data, withheld_data, learner, output_dirname, strategy=None,
-                      nruns=10, index=0, regression=False, sess=None, plot_umap=False, batch_size=5):
+                      nruns=10, index=0, regression=False, sess=None, plot_umap=False, batch_size=16):
     peps = train_data[1]
     labels = train_data[0]
     withheld_peps = withheld_data[1]
