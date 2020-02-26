@@ -81,6 +81,7 @@ def printHelp():
     print('usage: active_learn.py '
           '[data_root] '
           '[output_dirname] '
+          '[N_samples] '
           '[dataset_index] '
           '[strategy {all, random, qbc, umin}]'
           '[regression: 0 or 1]'
@@ -89,19 +90,20 @@ def printHelp():
 
 
 if __name__ == '__main__':
-    if len(argv) < 5:
+    if len(argv) < 6:
         printHelp()
         exit(1)
 
     root = argv[1] # location of data
     output_dirname = argv[2] # where to save the output
-    dataset_choice = argv[3] # index of chosen dataset
-    strategy_str = argv[4]
+    NSAMPLES = int(argv[3]) # how many samples (individual datapoints)
+    dataset_choice = argv[4] # index of chosen dataset
+    strategy_str = argv[5]
     regression = False # default to not doing regression
-    if len(argv) > 5:
-        regression = bool(int(argv[5]))
-        if len(argv) > 6:
-            convolution_params = (int(argv[6]), int(argv[7]))
+    if len(argv) > 6:
+        regression = bool(int(argv[6]))
+        if len(argv) > 7:
+            convolution_params = (int(argv[7]), int(argv[8]))
     else:
         regression = False
         convolution_params = None
@@ -111,10 +113,10 @@ if __name__ == '__main__':
     strategy, hyperparam_pairs = get_active_learner(strategy_str, convolution_params=convolution_params)
     learner = Learner(2, hyperparam_pairs, regression)
 
-    odir = os.path.join(output_dirname, strategy_str, dataset_choice)
+    odir = os.path.join(output_dirname + '-' + str(NSAMPLES), strategy_str, dataset_choice)
     os.makedirs(odir, exist_ok=True)
-    nruns = 10
-    ntrajs = 30
+    nruns = NSAMPLES
+    ntrajs = 100
     batch_size = 16
     if strategy is None:
         nruns = 1000000 # just go big

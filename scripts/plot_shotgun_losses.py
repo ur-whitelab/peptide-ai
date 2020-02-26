@@ -24,8 +24,8 @@ if len(argv) == 6:
 else:
     n_digits = 4
 
-avg_train_losses = np.zeros(len(np.genfromtxt('{}_train_losses.txt'.format(min_idx.zfill(n_digits)))))
-avg_withheld_losses = np.zeros(len(np.genfromtxt('{}_withheld_losses.txt'.format(min_idx.zfill(n_digits)))))
+avg_train_losses = np.zeros(np.genfromtxt('{}_train_losses.txt'.format(min_idx.zfill(n_digits))).size)
+avg_withheld_losses = np.zeros(np.genfromtxt('{}_withheld_losses.txt'.format(min_idx.zfill(n_digits))).size)
 Z = 0. # normalization constant
 
 fig = plt.figure(figsize=(4,3), dpi=180)

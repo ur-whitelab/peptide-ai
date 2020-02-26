@@ -11,8 +11,7 @@ META_LEARNING_RATE = 1e-4
 META_TRAIN_ITERS = 2000
 META_PERIOD = 50
 META_INNER_SAMPLES = 5
-META_VALIDATION_SAMPLES = 30
-META_VALIDATION_LENGTH = 10
+META_VALIDATION_SAMPLES = 100
 LABEL_DIMENSION = 2
 TEST_ZERO_SHOT = True
 SWAP_LABELS = True
@@ -39,14 +38,15 @@ def inner_iter(sess, learner, k, labels, peps, strategy, swap_labels=SWAP_LABELS
 
 if __name__ == '__main__':
     import sys
-    if len(sys.argv) < 5:
-        print('reptile.py [data_root] [output_root] [withhold-index] [strategy]')
+    if len(sys.argv) < 6:
+        print('reptile.py [data_root] [output_root] [N_trajectories] [withhold_index] [strategy]')
         exit()
     root = sys.argv[1]
-    withhold_index = int(sys.argv[3])
-    strategy_str = sys.argv[4]
+    meta_validation_length = int(sys.argv[3])
+    withhold_index = int(sys.argv[4])
+    strategy_str = sys.argv[5]
     eta = META_LEARNING_RATE
-    output_dirname = '{}/{}/{}'.format(sys.argv[2], strategy_str, withhold_index)
+    output_dirname = '{}-{}/{}/{}'.format(sys.argv[2], sys.argv[3], strategy_str, withhold_index)
     os.makedirs(output_dirname, exist_ok=True)
     # get data names
     datasets = load_datasets(root)
@@ -133,4 +133,4 @@ if __name__ == '__main__':
                         #        dataset index t/v lab
                         datasets[withhold_index][i][0][:,j] = 1 - datasets[withhold_index][i][0][:,j]
             evaluate_strategy(datasets[withhold_index][1], datasets[withhold_index][2], learner,
-                output_dirname, strategy=strategy, index=index, nruns=META_VALIDATION_LENGTH, regression=False, sess=sess)
+                output_dirname, strategy=strategy, index=index, nruns=meta_validation_length, regression=False, sess=sess)

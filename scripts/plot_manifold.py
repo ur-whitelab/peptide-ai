@@ -18,4 +18,4 @@ with tqdm.tqdm(total = 3 * 4) as pbar:
                 ax=axs[i,j],
                 colorbar = False)
 plt.tight_layout()
-plt.savefig('mannifold_subs.png', dpi=300)
+plt.savefig('manifold_subs.png', dpi=300)
