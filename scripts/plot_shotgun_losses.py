@@ -25,49 +25,49 @@ else:
     n_digits = 4
 
 avg_train_losses = np.zeros(np.genfromtxt('{}_train_losses.txt'.format(min_idx.zfill(n_digits))).size)
-avg_withheld_losses = np.zeros(np.genfromtxt('{}_withheld_losses.txt'.format(min_idx.zfill(n_digits))).size)
+avg_withheld_accuracy = np.zeros(np.genfromtxt('{}_withheld_accuracy.txt'.format(min_idx.zfill(n_digits))).size)
 Z = 0. # normalization constant
 
 fig = plt.figure(figsize=(4,3), dpi=180)
 ax = plt.gca()
 plt.title('{}'.format(dataset_name))
-plt.xlabel('Training Iteration')
-plt.ylabel('Loss')
+plt.xlabel('Given Examples')
+plt.ylabel('Accuracy')
 ax.set_ylim(0.0, 1.0)
-x_range = range(len(avg_withheld_losses))
+x_range = range(len(avg_withheld_accuracy))
 alpha_val = 0.1
 small_lw = 0.5
 big_lw = 1.0
 
 print('Starting with dataset: {}...'.format(dataset_name))
-print(x_range, len(avg_withheld_losses))
+print(x_range, len(avg_withheld_accuracy))
 for i in range(int(min_idx), int(max_idx)):
     Z += 1.
     train_data = np.genfromtxt('{}_train_losses.txt'.format(str(i).zfill(n_digits)))
-    avg_train_losses += train_data
+    avg_train_losses += train_data.flatten()
     # now withheld losses
-    withheld_data = np.genfromtxt('{}_withheld_losses.txt'.format(str(i).zfill(n_digits)))
+    withheld_data = np.genfromtxt('{}_withheld_accuracy.txt'.format(str(i).zfill(n_digits)))
     ax.plot(x_range, withheld_data, color='C0', alpha=2.*alpha_val, lw=small_lw)
-    avg_withheld_losses += withheld_data
+    avg_withheld_accuracy += withheld_data
 avg_train_losses /= Z
-avg_withheld_losses /= Z
+avg_withheld_accuracy /= Z
 print('Mean final training loss: {}'.format(avg_train_losses[-1]))
-print('Mean final withheld loss: {}'.format(avg_withheld_losses[-1]))
+print('Mean final withheld accuracy: {}'.format(avg_withheld_accuracy[-1]))
 labels = (ax.get_xticks())
 adjusted_labels = [int(item) for item in labels]
 ax.set_xticklabels(adjusted_labels)
-ax.plot(x_range, avg_withheld_losses, color='C0', label='Average Withheld Set Loss', lw=big_lw, alpha=1 - alpha_val)
+ax.plot(x_range, avg_withheld_accuracy, color='C0', label='Average Withheld Set Loss', lw=big_lw, alpha=1 - alpha_val)
 #ax.legend()
 plt.tight_layout()
 plt.savefig('{}.png'.format(dataset_name))
 
 np.savetxt('avg_training_loss.txt'.format(dataset_name), avg_train_losses)
-np.savetxt('avg_withheld_loss.txt'.format(dataset_name), avg_withheld_losses)
+np.savetxt('avg_withheld_accuracy.txt'.format(dataset_name), avg_withheld_accuracy)
 if control_dir is not None:
     control_avg_train_losses = np.genfromtxt('{}/avg_training_loss.txt'.format(control_dir))
-    control_avg_withheld_losses = np.genfromtxt('{}/avg_withheld_loss.txt'.format(control_dir))
+    control_avg_withheld_accuracy = np.genfromtxt('{}/avg_withheld_loss.txt'.format(control_dir))
     ax.plot(x_range, control_avg_train_losses, color='gray', label='Average Control Training Loss', lw=big_lw, ls='--')
-    axes[1].plot(x_range, control_avg_withheld_losses, color='gray', label='Average Control Withheld Loss', lw=big_lw, ls='--')
+    axes[1].plot(x_range, control_avg_withheld_accuracy, color='gray', label='Average Control Withheld Accuracy', lw=big_lw, ls='--')
     ax.legend()
     axes[1].legend()
     plt.tight_layout()

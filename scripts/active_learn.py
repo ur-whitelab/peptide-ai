@@ -4,7 +4,6 @@ from sys import argv
 import tensorflow as tf
 from utils import *
 import os
-import tqdm
 
 '''This script takes in a directory that should be full of vectorized peptides,
    which can be created from raw APD files via vectorize_peptides.py
@@ -19,14 +18,15 @@ def random_strategy(peps, est_labels, regression):
     return np.random.randint(0, len(peps))
 
 def qbc_class_strategy(peps, est_labels, stochastic=True):
-    raw_variances = np.array([[item[0] * item[1] for item in predictions_arr] for predictions_arr in est_labels])
+    raw_variances = np.array([[item[0] * (1.0 - item[0]) for item in predictions_arr] for predictions_arr in est_labels])
     variances = np.mean(raw_variances, axis=0)
     var_sum = np.sum(variances)
     probs_arr = variances/var_sum
     # now choose randomly, weighted by how much the models disagree
     # using len(peps) here ensures our probs arr is correct length
     if stochastic:
-        chosen_idx = np.random.choice(range(len(peps)), p=probs_arr)
+        p_arr = variances/var_sum if var_sum > 0. else np.ones_like(variances)/len(variances)
+        chosen_idx = np.random.choice(range(len(peps)), p=p_arr)
     else:
         chosen_idx = np.argmax(probs_arr)
     return chosen_idx
@@ -45,10 +45,15 @@ def qbc_strategy(peps, est_labels, regression):
     return qbc_class_strategy(peps, est_labels)
 
 def umin_strategy(peps, est_labels, regression, stochastic=True):
-    variances = [item[0] * item[1] for item in est_labels[0]]
+    print('IN UMIN_STRATEGY, est_labels is {}'.format(est_labels))
+    variances = est_labels[0] * (np.ones_like(est_labels[0]) - est_labels[0])#[item[0] * (1. - item[0]) for item in est_labels[0]]
+    print('IN UMIN_STRATEGY, variances is {}'.format(variances))
     var_sum = np.sum(variances)
+    print('IN UMIN_STRATEGY, var_sum is {}'.format(var_sum))
     if stochastic:
-        chosen_idx = np.random.choice(range(len(peps)), p=[(item/var_sum) for item in variances])
+        p_arr = variances/var_sum if var_sum > 0.0 else np.ones_like(variances)/len(variances)
+        print('p_arr is {} ({})'.format(p_arr, p_arr.shape))
+        chosen_idx = np.random.choice(range(len(peps)), p=p_arr.flatten())
     else:
         chosen_idx = np.argmax(variances)
     return chosen_idx
@@ -111,7 +116,7 @@ if __name__ == '__main__':
     name, (labels, peps), (withheld_labels, withheld_peps) = datasets[int(dataset_choice)]
 
     strategy, hyperparam_pairs = get_active_learner(strategy_str, convolution_params=convolution_params)
-    learner = Learner(2, hyperparam_pairs, regression)
+    learner = Learner(1, hyperparam_pairs, regression)
 
     odir = os.path.join(output_dirname + '-' + str(NSAMPLES), strategy_str, dataset_choice)
     os.makedirs(odir, exist_ok=True)
@@ -122,7 +127,7 @@ if __name__ == '__main__':
         nruns = 1000000 # just go big
         ntrajs = 10
         batch_size = 32
-    for i in tqdm.tqdm(range(ntrajs)):
+    for i in range(ntrajs):
         # re-split data
         (labels, peps), (withheld_labels, withheld_peps) = mix_split([peps, withheld_peps], [labels, withheld_labels])
         evaluate_strategy((labels, peps), (withheld_labels, withheld_peps), learner,
