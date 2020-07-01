@@ -51,7 +51,7 @@ def umin_strategy(peps, est_labels, regression, stochastic=True):
     var_sum = np.sum(variances)
     print('IN UMIN_STRATEGY, var_sum is {}'.format(var_sum))
     if stochastic:
-        p_arr = variances/var_sum if var_sum > 0.0 else np.ones_like(variances)/len(variances)
+        p_arr = variances/var_sum if var_sum > 0.0 else np.ones_like(variances)/np.sum(np.ones_like(variances))
         print('p_arr is {} ({})'.format(p_arr, p_arr.shape))
         chosen_idx = np.random.choice(range(len(peps)), p=p_arr.flatten())
     else:

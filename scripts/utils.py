@@ -109,9 +109,9 @@ class Learner:
         classifiers_losses = []
         calibrated_classifiers_losses = []
         logits = []
-        a = tf.compat.v1.Variable(1., trainable=True, name='a', constraint=lambda t: tf.compat.v1.clip_by_value(t, 0.001, 100.), dtype=tf.float64)
-        b = tf.compat.v1.Variable(1., trainable=True, name='b', constraint=lambda t: tf.compat.v1.clip_by_value(t, 0.001, 100.), dtype=tf.float64)
-        c = tf.compat.v1.Variable(1., trainable=True, name='c', dtype=tf.float64)
+        a = tf.compat.v1.Variable(0.2, trainable=True, name='a', constraint=lambda t: tf.compat.v1.clip_by_value(t, 0.001, 10000.), dtype=tf.compat.v1.float64)
+        b = tf.compat.v1.Variable(0.2, trainable=True, name='b', constraint=lambda t: tf.compat.v1.clip_by_value(t, 0.001, 10000.), dtype=tf.compat.v1.float64)
+        c = tf.compat.v1.Variable(1.1, trainable=True, name='c', dtype=tf.compat.v1.float64)
         self.classifier_outputs = []
         self.calibrated_classifier_outputs = []
         for i, conv in enumerate(convs):
@@ -133,8 +133,9 @@ class Learner:
             classifiers_losses.append(tf.compat.v1.losses.softmax_cross_entropy(onehot_labels=labels_tensor,logits=logits))
             # add beta calibration to the output layer
             term1 = tf.compat.v1.math.exp(c) * tf.compat.v1.math.pow(softmax_logits, a)
-            term2 = tf.compat.v1.math.pow((tf.compat.v1.ones_like(softmax_logits) - softmax_logits), b)
-            calibrated_logits = tf.compat.v1.ones_like(softmax_logits) / (tf.compat.v1.ones_like(softmax_logits) + tf.compat.v1.ones_like(softmax_logits) / ( term1 / (term2 + 0.00001) ))
+            term2 = tf.compat.v1.math.pow((1. - softmax_logits), b)
+            d = tf.compat.v1.ones_like(softmax_logits, dtype=tf.compat.v1.float64)
+            calibrated_logits = tf.compat.v1.math.divide_no_nan(d, (d + tf.compat.v1.math.divide_no_nan(d, tf.compat.v1.math.divide_no_nan( term1, term2 ))))
             self.calibrated_classifier_outputs.append(calibrated_logits)#(tf.compat.v1.nn.softmax(calibrated_logits))
             calibrated_classifiers_losses.append(tf.compat.v1.losses.log_loss(labels=labels_tensor,predictions=calibrated_logits))#mean_squared_error(labels=labels_tensor,predictions=calibrated_logits))
             #classifiers_losses.append(tf.losses.absolute_difference( labels_tensor, self.classifier_outputs[-1]))
@@ -152,7 +153,7 @@ class Learner:
         FPR = tf.compat.v1.reduce_sum(tf.compat.v1.abs(votes - tf.compat.v1.cast(labels_tensor, tf.compat.v1.float64))) / 2.0
         self.accuracy = 1 - FPR / tf.compat.v1.cast(tf.compat.v1.shape(labels_tensor)[0], tf.compat.v1.float64)
         self.classifier_optimizer = tf.compat.v1.train.AdamOptimizer(learning_rate=learning_rate).minimize(self.total_classifiers_loss, var_list=list(set(tf.compat.v1.global_variables()) - set([a, b, c])))
-        self.calibrated_classifier_optimizer = tf.compat.v1.train.AdamOptimizer(learning_rate=learning_rate * 10.).minimize(self.total_calibrated_classifiers_loss, var_list=[a,b,c])
+        self.calibrated_classifier_optimizer = tf.compat.v1.train.AdamOptimizer(learning_rate=learning_rate * 0.1).minimize(self.total_calibrated_classifiers_loss, var_list=[a,b,c])
         # for interpretation - only use last model (most hyperparameters)
         # we're getting partial (via stop_gradients) of positive label probability wrt aa_counts.
         count_grads = tf.compat.v1.gradients(self.calibrated_classifier_outputs[-1][:,0], aa_counts, stop_gradients=aa_counts)
@@ -172,13 +173,11 @@ class Learner:
             #losses[i], _ = sess.run(
             #    [self.total_classifiers_loss, self.classifier_optimizer],
             #    feed_dict={'input:0': peps[indices], 'labels:0': labels[indices]})
-            for j in range(100):
-                _ = sess.run([self.calibrated_classifier_optimizer],
-                             feed_dict={'input:0': peps[indices], 'labels:0': labels[indices]})
-            losses[i], calibrated_losses[i], _ = sess.run([self.total_classifiers_loss, 
-                                                           self.total_calibrated_classifiers_loss,
-                                                           self.classifier_optimizer], 
-                                                          feed_dict={'input:0': peps[indices], 'labels:0': labels[indices]})
+            losses[i], calibrated_losses[i], _, _= sess.run([self.total_classifiers_loss, 
+                                                             self.total_calibrated_classifiers_loss,
+                                                             self.classifier_optimizer,
+                                                             self.calibrated_classifier_optimizer], 
+                                                             feed_dict={'input:0': peps[indices], 'labels:0': labels[indices]})
         return losses, calibrated_losses
 
     def eval_loss(self, sess, labels, peps):
@@ -189,7 +188,7 @@ class Learner:
             feed_dict={'input:0': peps, 'labels:0':labels, 'dropout_rate:0': 0.0})
 
     def eval_labels(self, sess, peps):
-        retval = sess.run(self.calibrated_classifier_outputs,
+        retval = sess.run([self.classifier_outputs, self.calibrated_classifier_outputs],
             feed_dict={'input:0': peps, 'dropout_rate:0': 0.0})
         return retval
 
@@ -253,12 +252,10 @@ def prepare_data(positive_filename, negative_filenames, regression, withheld_per
 
     # calculate activities if we're not doing regression
     if not regression:
-        labels = np.zeros([len(peps), 2]) # one-hot encoding of labels
-        labels[:len(positive_peps),0] += 1. # positive labels are 0 index
-        labels[len(positive_peps):,1] += 1. # negative labels are 1 index
-        withheld_labels = np.zeros([len(withheld_peps), 2]) # one-hot encoding of labels
-        withheld_labels[:len(positive_withheld_peps),0] += 1. # positive labels are 0 index
-        withheld_labels[len(positive_withheld_peps):,1] += 1. # negative labels are 1 index
+        labels = np.zeros(len(peps)) # one-hot encoding of labels
+        labels[:len(positive_peps)] += 1. # positive labels are 1
+        withheld_labels = np.zeros(len(withheld_peps)) # one-hot encoding of labels
+        withheld_labels[:len(positive_withheld_peps)] += 1. # positive labels are 1
 
     # now re-shuffle all these in the same way
     shuffle_same_way([labels, peps])
@@ -343,9 +340,9 @@ def project_peptides(name, seqs, weights, cmap=None, labels=None, ax=None, color
 def evaluate_strategy(train_data, withheld_data, learner, output_dirname, strategy=None,
                       nruns=10, index=0, regression=False, sess=None, plot_umap=False, batch_size=16):
     peps = train_data[1]
-    labels = train_data[0][:,0, None]
+    labels = train_data[0][:, None]
     withheld_peps = withheld_data[1]
-    withheld_labels = withheld_data[0][:,0, None]
+    withheld_labels = withheld_data[0][:, None]
 
     train_losses = []
     withheld_accuracy = []
@@ -358,7 +355,6 @@ def evaluate_strategy(train_data, withheld_data, learner, output_dirname, strate
         sess = _sess
         # do get initial loss
         withheld_accuracy.append(learner.eval_accuracy(sess, withheld_labels, withheld_peps))
-        print('INITIAL WITHHELD ACCURACY: {}'.format(withheld_accuracy[-1]))
         for i in range(nruns):
             # run the classifiers on all available peptides to get their outputs
             # then pick the one according to the strategy
@@ -408,8 +404,9 @@ def evaluate_strategy(train_data, withheld_data, learner, output_dirname, strate
             for predictions_arr in final_withheld_predictions:
                 predictions_arrs.append(predictions_arr)
             predictions_arr = np.mean(np.array(predictions_arrs), axis=0)
+        print(f'withheld_labels shape:{withheld_labels.shape}, predictions_arr shape: {predictions_arr.shape}')
         withheld_fpr, withheld_tpr, withheld_threshold = roc_curve(withheld_labels,
-                                                                   predictions_arr)
+                                                                   predictions_arr[0])
         np.save('{}/{}_fpr.npy'.format(output_dirname, index.zfill(4)), withheld_fpr)
         np.save('{}/{}_tpr.npy'.format(output_dirname, index.zfill(4)), withheld_tpr)
         np.save('{}/{}_thresholds.npy'.format(output_dirname, index.zfill(4)), withheld_threshold)
