@@ -59,14 +59,14 @@ def load_data(filename, regression=False, labels_filename=None, withheld_percent
     return retval
 
 class Learner:
-    def __init__(self, label_width, hyperparam_pairs, regression=False, learning_rate=MODEL_LEARNING_RATE):
+    def __init__(self, label_width, hyperparam_pairs, regression=False, learning_rate=MODEL_LEARNING_RATE, calibration=True):
         tf.compat.v1.disable_eager_execution()
         self.filter_tensors = []
-        model_vars = self.build_model(
-                label_width,
-                hyperparam_pairs,
-                regression,
-                learning_rate)
+        self.calibration = calibration
+        self.build_model(label_width,
+                         hyperparam_pairs,
+                         regression,
+                         learning_rate)
 
     def make_convolution(self,motif_width, num_classes, input_tensor):
         data_tensor = input_tensor
@@ -147,26 +147,29 @@ class Learner:
         # sum over batches (0) and ys (len = 1, axis = 1)
         # should be left with gradient of length aa_counts
         self.count_grads = tf.compat.v1.reduce_sum(count_grads, axis=[0, 1])
+        if self.calibration:
+            self.build_calibration_graph(label_width, labels_tensor, learning_rate)
 
-    def build_calibration_graph(self, logits, label_width):
-        calibrated_classifiers_losses = []
-        # uncalibrated logits
+    def build_calibration_graph(self, label_width, labels_tensor, learning_rate):
+        # uncalibrated logits, to be fed in
         s = tf.compat.v1.placeholder(shape=np.array((None, label_width)),
                                     dtype=tf.compat.v1.float64,
-                                    name='input')
+                                    name='logits')
+        # inputs for beta calibration, following algorithm 2 from Kull, Filho and Flach
+        s_prime = tf.compat.v1.math.log(s)
+        s_double_prime = -1. * tf.compat.v1.log(1. - s)
         self.calibrated_classifier_outputs = []
+        # parameters for bivariate logistic fitting
         a = tf.compat.v1.Variable(0.2, trainable=True, name='a', constraint=lambda t: tf.compat.v1.clip_by_value(t, 0.001, 10000.), dtype=tf.compat.v1.float64)
         b = tf.compat.v1.Variable(0.2, trainable=True, name='b', constraint=lambda t: tf.compat.v1.clip_by_value(t, 0.001, 10000.), dtype=tf.compat.v1.float64)
         c = tf.compat.v1.Variable(1.1, trainable=True, name='c', dtype=tf.compat.v1.float64)
+
+        self.calibrated_logits = 1. / (1. + 1. / tf.compat.v1.math.exp(a * s_prime + b * s_double_prime + c) )
         # beta calibration on inputs
-        term1 = tf.compat.v1.math.exp(c) * tf.compat.v1.math.pow(softmax_logits, a)
-        term2 = tf.compat.v1.math.pow((1. - softmax_logits), b)
-        d = tf.compat.v1.ones_like(softmax_logits, dtype=tf.compat.v1.float64)
-        calibrated_logits = tf.compat.v1.math.divide_no_nan(d, (d + tf.compat.v1.math.divide_no_nan(d, tf.compat.v1.math.divide_no_nan( term1, term2 ))))
-        self.calibrated_classifier_outputs.append(calibrated_logits)#(tf.compat.v1.nn.softmax(calibrated_logits))
-        self.total_calibrated_classifiers_loss = tf.compat.v1.reduce_sum(calibrated_classifiers_losses) / float(len(calibrated_classifiers_losses))
-        self.calibrated_classifier_optimizer = tf.compat.v1.train.AdamOptimizer(learning_rate=learning_rate * 0.1).minimize(self.total_calibrated_classifiers_loss, var_list=[a,b,c])
-        calibrated_classifiers_losses.append(tf.compat.v1.losses.log_loss(labels=labels_tensor,predictions=calibrated_logits))
+        logistic_loss = tf.compat.v1.keras.losses.binary_crossentropy(y_true=labels_tensor, y_pred=self.calibrated_logits)
+
+        self.calibrated_classifier_output = self.calibrated_logits# (tf.compat.v1.nn.softmax(calibrated_logits))
+        self.calibrated_classifier_optimizer = tf.compat.v1.train.AdamOptimizer(learning_rate=learning_rate * 0.1).minimize(logistic_loss, var_list=[a,b,c])
 
 
     def train(self, sess, labels, peps, iters=DEFAULT_TRAIN_ITERS, batch_size=16, replacement=False):
