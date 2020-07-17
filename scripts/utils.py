@@ -107,13 +107,8 @@ class Learner:
         for hparam_pair in hyperparam_pairs:
             convs.append(self.make_convolution(hparam_pair[0], hparam_pair[1], input_tensor))
         classifiers_losses = []
-        calibrated_classifiers_losses = []
         logits = []
-        a = tf.compat.v1.Variable(0.2, trainable=True, name='a', constraint=lambda t: tf.compat.v1.clip_by_value(t, 0.001, 10000.), dtype=tf.compat.v1.float64)
-        b = tf.compat.v1.Variable(0.2, trainable=True, name='b', constraint=lambda t: tf.compat.v1.clip_by_value(t, 0.001, 10000.), dtype=tf.compat.v1.float64)
-        c = tf.compat.v1.Variable(1.1, trainable=True, name='c', dtype=tf.compat.v1.float64)
         self.classifier_outputs = []
-        self.calibrated_classifier_outputs = []
         for i, conv in enumerate(convs):
             features = tf.compat.v1.concat([conv,aa_counts], axis=1)
             x0 = tf.compat.v1.nn.dropout(tf.compat.v1.layers.dense(features,
@@ -128,42 +123,54 @@ class Learner:
                                       rate=dropout_rate)
             # x is now the final layer
             logits = tf.compat.v1.layers.dense(x, label_width)
-            softmax_logits = tf.compat.v1.nn.softmax(logits)
-            self.classifier_outputs.append(softmax_logits)
-            classifiers_losses.append(tf.compat.v1.losses.softmax_cross_entropy(onehot_labels=labels_tensor,logits=logits))
-            # add beta calibration to the output layer
-            term1 = tf.compat.v1.math.exp(c) * tf.compat.v1.math.pow(softmax_logits, a)
-            term2 = tf.compat.v1.math.pow((1. - softmax_logits), b)
-            d = tf.compat.v1.ones_like(softmax_logits, dtype=tf.compat.v1.float64)
-            calibrated_logits = tf.compat.v1.math.divide_no_nan(d, (d + tf.compat.v1.math.divide_no_nan(d, tf.compat.v1.math.divide_no_nan( term1, term2 ))))
-            self.calibrated_classifier_outputs.append(calibrated_logits)#(tf.compat.v1.nn.softmax(calibrated_logits))
-            calibrated_classifiers_losses.append(tf.compat.v1.losses.log_loss(labels=labels_tensor,predictions=calibrated_logits))#mean_squared_error(labels=labels_tensor,predictions=calibrated_logits))
-            #classifiers_losses.append(tf.losses.absolute_difference( labels_tensor, self.classifier_outputs[-1]))
+            sigmoid_logits = tf.compat.v1.nn.sigmoid(logits)
+            self.classifier_outputs.append(sigmoid_logits)
+            #classifiers_losses.append(tf.compat.v1.losses.softmax_cross_entropy(onehot_labels=labels_tensor,logits=logits))
+            classifiers_losses.append(tf.compat.v1.keras.losses.binary_crossentropy( y_true=labels_tensor, y_pred=sigmoid_logits))
             # output is 2D: probabilities of 'has this property'/'does not have'
             # easier to compare logits with one-hot labels this way
         # Instead of learner NN model, here we use uncertainty minimization
         self.total_classifiers_loss = tf.compat.v1.reduce_sum(classifiers_losses) / float(len(classifiers_losses))
-        self.total_calibrated_classifiers_loss = tf.compat.v1.reduce_sum(calibrated_classifiers_losses) / float(len(calibrated_classifiers_losses))
         # join classifiers
-        full_labels = tf.compat.v1.concat([x[tf.compat.v1.newaxis, :, :] for x in self.calibrated_classifier_outputs], axis=0)
+        labels = tf.compat.v1.concat([x[tf.compat.v1.newaxis, :, :] for x in self.classifier_outputs], axis=0)
         # get majority vote
         # get avg prediction, take mean, then compare
-        votes = tf.compat.v1.math.round(tf.compat.v1.reduce_mean(full_labels, axis=0))
+        votes = tf.compat.v1.math.round(tf.compat.v1.reduce_mean(labels, axis=0))
         # [0, 1] - [1, 0] = [-1, 1] -> abs sum is 2, so divide by 2
-        FPR = tf.compat.v1.reduce_sum(tf.compat.v1.abs(votes - tf.compat.v1.cast(labels_tensor, tf.compat.v1.float64))) / 2.0
+        FPR = tf.compat.v1.reduce_sum(tf.compat.v1.abs(votes - tf.compat.v1.cast(labels_tensor, tf.compat.v1.float64)))# / 2.0
         self.accuracy = 1 - FPR / tf.compat.v1.cast(tf.compat.v1.shape(labels_tensor)[0], tf.compat.v1.float64)
-        self.classifier_optimizer = tf.compat.v1.train.AdamOptimizer(learning_rate=learning_rate).minimize(self.total_classifiers_loss, var_list=list(set(tf.compat.v1.global_variables()) - set([a, b, c])))
-        self.calibrated_classifier_optimizer = tf.compat.v1.train.AdamOptimizer(learning_rate=learning_rate * 0.1).minimize(self.total_calibrated_classifiers_loss, var_list=[a,b,c])
+        self.classifier_optimizer = tf.compat.v1.train.AdamOptimizer(learning_rate=learning_rate).minimize(self.total_classifiers_loss)
+        
         # for interpretation - only use last model (most hyperparameters)
         # we're getting partial (via stop_gradients) of positive label probability wrt aa_counts.
-        count_grads = tf.compat.v1.gradients(self.calibrated_classifier_outputs[-1][:,0], aa_counts, stop_gradients=aa_counts)
+        count_grads = tf.compat.v1.gradients(self.classifier_outputs[-1][:,0], aa_counts, stop_gradients=aa_counts)
         # sum over batches (0) and ys (len = 1, axis = 1)
         # should be left with gradient of length aa_counts
         self.count_grads = tf.compat.v1.reduce_sum(count_grads, axis=[0, 1])
 
+    def build_calibration_graph(self, logits, label_width):
+        calibrated_classifiers_losses = []
+        # uncalibrated logits
+        s = tf.compat.v1.placeholder(shape=np.array((None, label_width)),
+                                    dtype=tf.compat.v1.float64,
+                                    name='input')
+        self.calibrated_classifier_outputs = []
+        a = tf.compat.v1.Variable(0.2, trainable=True, name='a', constraint=lambda t: tf.compat.v1.clip_by_value(t, 0.001, 10000.), dtype=tf.compat.v1.float64)
+        b = tf.compat.v1.Variable(0.2, trainable=True, name='b', constraint=lambda t: tf.compat.v1.clip_by_value(t, 0.001, 10000.), dtype=tf.compat.v1.float64)
+        c = tf.compat.v1.Variable(1.1, trainable=True, name='c', dtype=tf.compat.v1.float64)
+        # beta calibration on inputs
+        term1 = tf.compat.v1.math.exp(c) * tf.compat.v1.math.pow(softmax_logits, a)
+        term2 = tf.compat.v1.math.pow((1. - softmax_logits), b)
+        d = tf.compat.v1.ones_like(softmax_logits, dtype=tf.compat.v1.float64)
+        calibrated_logits = tf.compat.v1.math.divide_no_nan(d, (d + tf.compat.v1.math.divide_no_nan(d, tf.compat.v1.math.divide_no_nan( term1, term2 ))))
+        self.calibrated_classifier_outputs.append(calibrated_logits)#(tf.compat.v1.nn.softmax(calibrated_logits))
+        self.total_calibrated_classifiers_loss = tf.compat.v1.reduce_sum(calibrated_classifiers_losses) / float(len(calibrated_classifiers_losses))
+        self.calibrated_classifier_optimizer = tf.compat.v1.train.AdamOptimizer(learning_rate=learning_rate * 0.1).minimize(self.total_calibrated_classifiers_loss, var_list=[a,b,c])
+        calibrated_classifiers_losses.append(tf.compat.v1.losses.log_loss(labels=labels_tensor,predictions=calibrated_logits))
+
+
     def train(self, sess, labels, peps, iters=DEFAULT_TRAIN_ITERS, batch_size=16, replacement=False):
         losses = [0 for _ in range(iters)]
-        calibrated_losses = [0 for _ in range(iters)]
         # only go as many iters as we have data (heuristic)
         iters = min(iters, peps.shape[0])
         for i in range(iters):
@@ -173,12 +180,10 @@ class Learner:
             #losses[i], _ = sess.run(
             #    [self.total_classifiers_loss, self.classifier_optimizer],
             #    feed_dict={'input:0': peps[indices], 'labels:0': labels[indices]})
-            losses[i], calibrated_losses[i], _, _= sess.run([self.total_classifiers_loss, 
-                                                             self.total_calibrated_classifiers_loss,
-                                                             self.classifier_optimizer,
-                                                             self.calibrated_classifier_optimizer], 
-                                                             feed_dict={'input:0': peps[indices], 'labels:0': labels[indices]})
-        return losses, calibrated_losses
+            losses[i], _= sess.run([self.total_classifiers_loss, 
+                                    self.classifier_optimizer], 
+                                    feed_dict={'input:0': peps[indices], 'labels:0': labels[indices]})
+        return losses
 
     def eval_loss(self, sess, labels, peps):
         return self.eval(sess, labels, peps)[0]
@@ -188,13 +193,13 @@ class Learner:
             feed_dict={'input:0': peps, 'labels:0':labels, 'dropout_rate:0': 0.0})
 
     def eval_labels(self, sess, peps):
-        retval = sess.run([self.classifier_outputs, self.calibrated_classifier_outputs],
+        retval = sess.run([self.classifier_outputs],
             feed_dict={'input:0': peps, 'dropout_rate:0': 0.0})
         return retval
 
     def eval(self, sess, labels, peps):
         return sess.run(
-            [self.total_calibrated_classifiers_loss, self.calibrated_classifier_outputs],
+            [self.total_calibrated_classifiers_loss],
             feed_dict={'input:0': peps, 'labels:0': labels, 'dropout_rate:0': 0.0})
 
     def eval_motifs(self, sess):
@@ -359,7 +364,6 @@ def evaluate_strategy(train_data, withheld_data, learner, output_dirname, strate
             # run the classifiers on all available peptides to get their outputs
             # then pick the one according to the strategy
             output = learner.eval_labels(sess, peps)
-            print('OUTPUT IS {}'.format(output))
             # make random selections for next training point.
             if strategy is None:
                 train_losses.append(learner.train(sess, labels, peps, batch_size=batch_size, iters=nruns)[-1])
@@ -404,7 +408,6 @@ def evaluate_strategy(train_data, withheld_data, learner, output_dirname, strate
             for predictions_arr in final_withheld_predictions:
                 predictions_arrs.append(predictions_arr)
             predictions_arr = np.mean(np.array(predictions_arrs), axis=0)
-        print(f'withheld_labels shape:{withheld_labels.shape}, predictions_arr shape: {predictions_arr.shape}')
         withheld_fpr, withheld_tpr, withheld_threshold = roc_curve(withheld_labels,
                                                                    predictions_arr[0])
         np.save('{}/{}_fpr.npy'.format(output_dirname, index.zfill(4)), withheld_fpr)

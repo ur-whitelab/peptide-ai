@@ -45,14 +45,10 @@ def qbc_strategy(peps, est_labels, regression):
     return qbc_class_strategy(peps, est_labels)
 
 def umin_strategy(peps, est_labels, regression, stochastic=True):
-    print('IN UMIN_STRATEGY, est_labels is {}'.format(est_labels))
     variances = est_labels[0] * (np.ones_like(est_labels[0]) - est_labels[0])#[item[0] * (1. - item[0]) for item in est_labels[0]]
-    print('IN UMIN_STRATEGY, variances is {}'.format(variances))
     var_sum = np.sum(variances)
-    print('IN UMIN_STRATEGY, var_sum is {}'.format(var_sum))
     if stochastic:
         p_arr = variances/var_sum if var_sum > 0.0 else np.ones_like(variances)/np.sum(np.ones_like(variances))
-        print('p_arr is {} ({})'.format(p_arr, p_arr.shape))
         chosen_idx = np.random.choice(range(len(peps)), p=p_arr.flatten())
     else:
         chosen_idx = np.argmax(variances)
