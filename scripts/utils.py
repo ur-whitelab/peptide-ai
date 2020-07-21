@@ -15,6 +15,7 @@ HIDDEN_LAYER_NUMBER = 3
 DEFAULT_DROPOUT_RATE = 0.0
 MODEL_LEARNING_RATE = 1e-3
 DEFAULT_TRAIN_ITERS = 16
+DEFAULT_CALIBRATION_ITERS = 32
 
 def shuffle_same_way(list_of_arrays):
     rng_state = np.random.get_state()
@@ -152,13 +153,10 @@ class Learner:
 
     def build_calibration_graph(self, label_width, labels_tensor, learning_rate):
         # uncalibrated logits, to be fed in
-        s = tf.compat.v1.placeholder(shape=np.array((None, label_width)),
-                                    dtype=tf.compat.v1.float64,
-                                    name='logits')
+        s = self.classifier_outputs[-1]
         # inputs for beta calibration, following algorithm 2 from Kull, Filho and Flach
         s_prime = tf.compat.v1.math.log(s)
         s_double_prime = -1. * tf.compat.v1.log(1. - s)
-        self.calibrated_classifier_outputs = []
         # parameters for bivariate logistic fitting
         a = tf.compat.v1.Variable(0.2, trainable=True, name='a', constraint=lambda t: tf.compat.v1.clip_by_value(t, 0.001, 10000.), dtype=tf.compat.v1.float64)
         b = tf.compat.v1.Variable(0.2, trainable=True, name='b', constraint=lambda t: tf.compat.v1.clip_by_value(t, 0.001, 10000.), dtype=tf.compat.v1.float64)
@@ -166,10 +164,10 @@ class Learner:
 
         self.calibrated_logits = 1. / (1. + 1. / tf.compat.v1.math.exp(a * s_prime + b * s_double_prime + c) )
         # beta calibration on inputs
-        logistic_loss = tf.compat.v1.keras.losses.binary_crossentropy(y_true=labels_tensor, y_pred=self.calibrated_logits)
+        self.calibrated_classifier_loss = tf.compat.v1.keras.losses.binary_crossentropy(y_true=labels_tensor, y_pred=self.calibrated_logits)
 
         self.calibrated_classifier_output = self.calibrated_logits# (tf.compat.v1.nn.softmax(calibrated_logits))
-        self.calibrated_classifier_optimizer = tf.compat.v1.train.AdamOptimizer(learning_rate=learning_rate * 0.1).minimize(logistic_loss, var_list=[a,b,c])
+        self.calibrated_classifier_optimizer = tf.compat.v1.train.AdamOptimizer(learning_rate=learning_rate * 0.1).minimize(self.calibrated_classifier_loss, var_list=[a,b,c])
 
 
     def train(self, sess, labels, peps, iters=DEFAULT_TRAIN_ITERS, batch_size=16, replacement=False):
@@ -188,6 +186,18 @@ class Learner:
                                     feed_dict={'input:0': peps[indices], 'labels:0': labels[indices]})
         return losses
 
+    def calibrate(self, sess, labels, peps, iters=DEFAULT_CALIBRATION_ITERS, batch_size=16, replacement=False):
+        losses = [0 for _ in range(iters)]
+        # only go as many iters as we have data (heuristic)
+        iters = min(iters, peps.shape[0])
+        for i in range(iters):
+            # like in self.train()
+            indices = np.random.choice(peps.shape[0], min(peps.shape[0], batch_size), replace=replacement)
+            losses[i], _= sess.run([self.calibrated_classifier_loss, 
+                                    self.calibrated_classifier_optimizer], 
+                                    feed_dict={'input:0': peps[indices], 'labels:0': labels[indices]})
+            
+
     def eval_loss(self, sess, labels, peps):
         return self.eval(sess, labels, peps)[0]
 
@@ -196,13 +206,18 @@ class Learner:
             feed_dict={'input:0': peps, 'labels:0':labels, 'dropout_rate:0': 0.0})
 
     def eval_labels(self, sess, peps):
-        retval = sess.run([self.classifier_outputs],
-            feed_dict={'input:0': peps, 'dropout_rate:0': 0.0})
+        if self.calibration:
+            retval = sess.run([self.calibrated_classifier_output],
+                feed_dict={'input:0': peps, 'dropout_rate:0': 0.0})
+        else:
+            retval = sess.run([self.classifier_outputs],
+                feed_dict={'input:0': peps, 'dropout_rate:0': 0.0})
         return retval
 
     def eval(self, sess, labels, peps):
+        # TODO: should this be using calibrated loss? It's not the same metric, exactly
         return sess.run(
-            [self.total_calibrated_classifiers_loss],
+            [self.total_classifiers_loss],
             feed_dict={'input:0': peps, 'labels:0': labels, 'dropout_rate:0': 0.0})
 
     def eval_motifs(self, sess):
@@ -346,7 +361,8 @@ def project_peptides(name, seqs, weights, cmap=None, labels=None, ax=None, color
             plt.savefig('{}-{}-projection.png'.format(name, i), dpi=300)
 
 def evaluate_strategy(train_data, withheld_data, learner, output_dirname, strategy=None,
-                      nruns=10, index=0, regression=False, sess=None, plot_umap=False, batch_size=16):
+                      nruns=10, index=0, regression=False, sess=None, plot_umap=False,
+                      batch_size=16, calibration=True):
     peps = train_data[1]
     labels = train_data[0][:, None]
     withheld_peps = withheld_data[1]
@@ -377,6 +393,8 @@ def evaluate_strategy(train_data, withheld_data, learner, output_dirname, strate
             # train for the chosen number of steps after each observation
             # only append final training value
             train_losses.append(learner.train(sess, labels[pep_choice_indices], peps[pep_choice_indices], batch_size=batch_size)[-1])
+            if calibration:
+                learner.calibrate(sess, labels[pep_choice_indices], peps[pep_choice_indices], batch_size=batch_size)
             withheld_accuracy.append(learner.eval_accuracy(sess, withheld_labels, withheld_peps))
 
         # now that training is done, get final withheld predictions
@@ -412,7 +430,7 @@ def evaluate_strategy(train_data, withheld_data, learner, output_dirname, strate
                 predictions_arrs.append(predictions_arr)
             predictions_arr = np.mean(np.array(predictions_arrs), axis=0)
         withheld_fpr, withheld_tpr, withheld_threshold = roc_curve(withheld_labels,
-                                                                   predictions_arr[0])
+                                                                   predictions_arr)
         np.save('{}/{}_fpr.npy'.format(output_dirname, index.zfill(4)), withheld_fpr)
         np.save('{}/{}_tpr.npy'.format(output_dirname, index.zfill(4)), withheld_tpr)
         np.save('{}/{}_thresholds.npy'.format(output_dirname, index.zfill(4)), withheld_threshold)

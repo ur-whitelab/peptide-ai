@@ -127,4 +127,5 @@ if __name__ == '__main__':
         # re-split data
         (labels, peps), (withheld_labels, withheld_peps) = mix_split([peps, withheld_peps], [labels, withheld_labels])
         evaluate_strategy((labels, peps), (withheld_labels, withheld_peps), learner,
-                   odir, strategy=strategy, nruns=nruns, index=i, regression=regression, batch_size=batch_size)
+                   odir, strategy=strategy, nruns=nruns, index=i, regression=regression,
+                   batch_size=batch_size, calibration=True)
