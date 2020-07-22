@@ -60,6 +60,7 @@ ax.plot(x_range, avg_withheld_accuracy, color='C0', label='Average Withheld Set 
 #ax.legend()
 plt.tight_layout()
 plt.savefig('{}.png'.format(dataset_name))
+plt.savefig('{}.svg'.format(dataset_name))
 
 np.savetxt('avg_training_loss.txt'.format(dataset_name), avg_train_losses)
 np.savetxt('avg_withheld_accuracy.txt'.format(dataset_name), avg_withheld_accuracy)
