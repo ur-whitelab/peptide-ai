@@ -60,10 +60,13 @@ def load_data(filename, regression=False, labels_filename=None, withheld_percent
     return retval
 
 class Learner:
-    def __init__(self, label_width, hyperparam_pairs, regression=False, learning_rate=MODEL_LEARNING_RATE, calibration=True):
+    def __init__(self, label_width, hyperparam_pairs, regression=False, learning_rate=MODEL_LEARNING_RATE, calibration=True, debug=False):
         tf.compat.v1.disable_eager_execution()
         self.filter_tensors = []
         self.calibration = calibration
+        self.debug = debug
+        if self.debug:
+            self.check_op = tf.compat.v1.add_check_numerics_ops()
         self.build_model(label_width,
                          hyperparam_pairs,
                          regression,
@@ -153,21 +156,26 @@ class Learner:
 
     def build_calibration_graph(self, label_width, labels_tensor, learning_rate):
         # uncalibrated logits, to be fed in
-        s = self.classifier_outputs[-1]
+        # clip to avoid nans in logs
+        s = tf.compat.v1.clip_by_value(self.classifier_outputs[-1], 1e-5, 0.9999)
         # inputs for beta calibration, following algorithm 2 from Kull, Filho and Flach
         s_prime = tf.compat.v1.math.log(s)
         s_double_prime = -1. * tf.compat.v1.log(1. - s)
         # parameters for bivariate logistic fitting
         a = tf.compat.v1.Variable(0.2, trainable=True, name='a', constraint=lambda t: tf.compat.v1.clip_by_value(t, 0.001, 10000.), dtype=tf.compat.v1.float64)
         b = tf.compat.v1.Variable(0.2, trainable=True, name='b', constraint=lambda t: tf.compat.v1.clip_by_value(t, 0.001, 10000.), dtype=tf.compat.v1.float64)
-        c = tf.compat.v1.Variable(1.1, trainable=True, name='c', dtype=tf.compat.v1.float64)
+        c = tf.compat.v1.Variable(1.1, trainable=True, name='c', constraint=lambda t: tf.compat.v1.clip_by_value(t, -10000., 10000.), dtype=tf.compat.v1.float64)
 
-        self.calibrated_logits = 1. / (1. + 1. / tf.compat.v1.math.exp(a * s_prime + b * s_double_prime + c) )
+        self.calibrated_logits = tf.compat.v1.div_no_nan(tf.compat.v1.cast(1., tf.compat.v1.float64), 
+            tf.compat.v1.cast(1., tf.compat.v1.float64) + tf.compat.v1.div_no_nan(tf.compat.v1.cast(1., tf.compat.v1.float64),
+                tf.compat.v1.clip_by_value(tf.compat.v1.math.exp(a * s_prime + b * s_double_prime + c), 0.00001, 10000. )
+                )
+            )
         # beta calibration on inputs
         self.calibrated_classifier_loss = tf.compat.v1.keras.losses.binary_crossentropy(y_true=labels_tensor, y_pred=self.calibrated_logits)
 
         self.calibrated_classifier_output = self.calibrated_logits# (tf.compat.v1.nn.softmax(calibrated_logits))
-        self.calibrated_classifier_optimizer = tf.compat.v1.train.AdamOptimizer(learning_rate=learning_rate * 0.1).minimize(self.calibrated_classifier_loss, var_list=[a,b,c])
+        self.calibrated_classifier_optimizer = tf.compat.v1.train.AdamOptimizer(learning_rate=learning_rate).minimize(self.calibrated_classifier_loss, var_list=[a,b,c])
 
 
     def train(self, sess, labels, peps, iters=DEFAULT_TRAIN_ITERS, batch_size=16, replacement=False):
@@ -181,9 +189,14 @@ class Learner:
             #losses[i], _ = sess.run(
             #    [self.total_classifiers_loss, self.classifier_optimizer],
             #    feed_dict={'input:0': peps[indices], 'labels:0': labels[indices]})
-            losses[i], _= sess.run([self.total_classifiers_loss, 
-                                    self.classifier_optimizer], 
-                                    feed_dict={'input:0': peps[indices], 'labels:0': labels[indices]})
+            node_list = [self.total_classifiers_loss, self.classifier_optimizer]
+            if self.debug:
+                node_list.append(self.check_op)
+                losses[i], _, _ = sess.run(node_list, 
+                                           feed_dict={'input:0': peps[indices], 'labels:0': labels[indices]})
+            else:
+                losses[i], _ = sess.run(node_list, 
+                                        feed_dict={'input:0': peps[indices], 'labels:0': labels[indices]})
         return losses
 
     def calibrate(self, sess, labels, peps, iters=DEFAULT_CALIBRATION_ITERS, batch_size=16, replacement=False):
@@ -193,40 +206,58 @@ class Learner:
         for i in range(iters):
             # like in self.train()
             indices = np.random.choice(peps.shape[0], min(peps.shape[0], batch_size), replace=replacement)
-            losses[i], _= sess.run([self.calibrated_classifier_loss, 
-                                    self.calibrated_classifier_optimizer], 
-                                    feed_dict={'input:0': peps[indices], 'labels:0': labels[indices]})
+            node_list = [self.calibrated_classifier_loss, self.calibrated_classifier_optimizer]
+            if self.debug:
+                node_list.append(self.check_op)
+                losses[i], _, _ = sess.run(node_list,
+                                           feed_dict={'input:0': peps[indices], 'labels:0': labels[indices]})
+            else:
+                losses[i], _ = sess.run(node_list,
+                                        feed_dict={'input:0': peps[indices], 'labels:0': labels[indices]})
             
-
-    def eval_loss(self, sess, labels, peps):
-        return self.eval(sess, labels, peps)[0]
-
     def eval_accuracy(self, sess, labels, peps):
-        return sess.run(self.accuracy,
-            feed_dict={'input:0': peps, 'labels:0':labels, 'dropout_rate:0': 0.0})
+        node_list = [self.accuracy]
+        if self.debug:
+            node_list.append(self.check_op)
+            retval, _ = sess.run(node_list,
+                                 feed_dict={'input:0': peps, 'labels:0':labels, 'dropout_rate:0': 0.0})
+        else:
+            retval = sess.run(node_list, feed_dict={'input:0': peps, 'labels:0':labels, 'dropout_rate:0': 0.0})[0]
+        return retval
 
     def eval_labels(self, sess, peps):
         if self.calibration:
-            retval = sess.run([self.calibrated_classifier_output],
-                feed_dict={'input:0': peps, 'dropout_rate:0': 0.0})
+            node_list = [self.calibrated_classifier_output]
         else:
-            retval = sess.run([self.classifier_outputs],
-                feed_dict={'input:0': peps, 'dropout_rate:0': 0.0})
-        return retval
-
-    def eval(self, sess, labels, peps):
-        # TODO: should this be using calibrated loss? It's not the same metric, exactly
-        return sess.run(
-            [self.total_classifiers_loss],
-            feed_dict={'input:0': peps, 'labels:0': labels, 'dropout_rate:0': 0.0})
+            node_list = [self.classifier_outputs]
+        if self.debug:
+            node_list.append(self.check_op)
+            retval = sess.run(node_list,
+                              feed_dict={'input:0': peps, 'dropout_rate:0': 0.0})
+        else:
+            retval = sess.run(node_list,
+                              feed_dict={'input:0': peps, 'dropout_rate:0': 0.0})
+        return retval[0]
 
     def eval_motifs(self, sess):
-        return sess.run(self.cov_features)
+        node_list = [self.cov_features]
+        if self.debug:
+            node_list.append(self.check_op)
+            retval, _ = sess.run(node_list)
+        else:
+            retval = sess.run(node_list)[0]
+        return retval
 
     def eval_count_grad(self, sess, peps):
-        return sess.run(
-            self.count_grads,
-            feed_dict={'input:0': peps, 'dropout_rate:0': 0.0})
+        node_list = [self.count_grads]
+        if self.debug:
+            node_list.append(self.check_op)
+            retval, _ = sess.run(node_list,
+                                 feed_dict={'input:0': peps, 'dropout_rate:0': 0.0})
+        else:
+            retval = sess.run(node_list,
+                              feed_dict={'input:0': peps, 'dropout_rate:0': 0.0})[0]
+        return retval
 
 
 
@@ -399,6 +430,8 @@ def evaluate_strategy(train_data, withheld_data, learner, output_dirname, strate
 
         # now that training is done, get final withheld predictions
         final_withheld_predictions = learner.eval_labels(sess, withheld_peps)
+        print('final_withheld_predictions is {}'.format(final_withheld_predictions))
+        print('shape: {}'.format(final_withheld_predictions.shape))
         final_train_predictions = learner.eval_labels(sess, peps)
         motifs = learner.eval_motifs(sess)
         # make poly-alanine
@@ -410,6 +443,9 @@ def evaluate_strategy(train_data, withheld_data, learner, output_dirname, strate
         project_peptides(os.path.join(output_dirname, str(index)), peps,  [final_train_predictions[0][:,1],  1. - labels])
     index = str(index) # make sure it's a string
     np.savetxt('{}/{}_train_losses.txt'.format(output_dirname, index.zfill(4)), train_losses)
+    print('output dir: {}'.format(output_dirname))
+    print('index: {}'.format(index.zfill(4)))
+    print('withheld_accuracy: {}'.format(withheld_accuracy))
     np.savetxt('{}/{}_withheld_accuracy.txt'.format(output_dirname, index.zfill(4)), withheld_accuracy)
     np.savetxt('{}/{}_choices.txt'.format(output_dirname, index.zfill(4)), pep_choice_indices)
     np.savetxt('{}/{}_motifs.txt'.format(output_dirname, index.zfill(4)), motifs)
@@ -420,15 +456,16 @@ def evaluate_strategy(train_data, withheld_data, learner, output_dirname, strate
     if not regression and nruns > 0:
         # AUC analysis (misclassification) for final withheld predictions
         # iterate over all models
-        if len(final_withheld_predictions) == 1:
+        if final_withheld_predictions.shape[1] == 1:
             #not qbc
-            predictions_arr = final_withheld_predictions[0]
+            predictions_arr = final_withheld_predictions
         else:
             #in qbc, do average of committee predictions for AUC
             predictions_arrs = []
             for predictions_arr in final_withheld_predictions:
                 predictions_arrs.append(predictions_arr)
             predictions_arr = np.mean(np.array(predictions_arrs), axis=0)
+        print('BEFORE ROC ANALYSIS, predictions_arr is {}'.format(predictions_arr))
         withheld_fpr, withheld_tpr, withheld_threshold = roc_curve(withheld_labels,
                                                                    predictions_arr)
         np.save('{}/{}_fpr.npy'.format(output_dirname, index.zfill(4)), withheld_fpr)

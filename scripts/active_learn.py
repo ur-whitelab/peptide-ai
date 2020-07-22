@@ -45,7 +45,9 @@ def qbc_strategy(peps, est_labels, regression):
     return qbc_class_strategy(peps, est_labels)
 
 def umin_strategy(peps, est_labels, regression, stochastic=True):
-    variances = est_labels[0] * (np.ones_like(est_labels[0]) - est_labels[0])#[item[0] * (1. - item[0]) for item in est_labels[0]]
+    print('est_labels is {}'.format(est_labels))
+    variances = est_labels * (np.ones_like(est_labels) - est_labels)#[item[0] * (1. - item[0]) for item in est_labels[0]]
+    print('variances is {}'.format(variances))
     var_sum = np.sum(variances)
     if stochastic:
         p_arr = variances/var_sum if var_sum > 0.0 else np.ones_like(variances)/np.sum(np.ones_like(variances))
@@ -85,7 +87,8 @@ def printHelp():
           '[N_samples] '
           '[dataset_index] '
           '[strategy {all, random, qbc, umin}]'
-          '[regression: 0 or 1]'
+          '[calibration: 0 or 1 (default: on)]'
+          '[regression: 0 or 1 (default: off)]'
           '(Use negative_vectors_file for activities file when doing regression.)')
     exit()
 
@@ -101,23 +104,24 @@ if __name__ == '__main__':
     dataset_choice = argv[4] # index of chosen dataset
     strategy_str = argv[5]
     regression = False # default to not doing regression
+    calibration = True # use beta-calibration by default
+    convolution_params = None
     if len(argv) > 6:
-        regression = bool(int(argv[6]))
+        calibration = bool(int(argv[6]))
         if len(argv) > 7:
-            convolution_params = (int(argv[7]), int(argv[8]))
-    else:
-        regression = False
-        convolution_params = None
+            regression = bool(int(argv[7]))
+            if len(argv) > 8:
+                convolution_params = (int(argv[8]), int(argv[9]))
     datasets = load_datasets(root)
     name, (labels, peps), (withheld_labels, withheld_peps) = datasets[int(dataset_choice)]
 
     strategy, hyperparam_pairs = get_active_learner(strategy_str, convolution_params=convolution_params)
-    learner = Learner(1, hyperparam_pairs, regression)
+    learner = Learner(1, hyperparam_pairs, regression, debug=False)
 
     odir = os.path.join(output_dirname + '-' + str(NSAMPLES), strategy_str, dataset_choice)
     os.makedirs(odir, exist_ok=True)
     nruns = NSAMPLES
-    ntrajs = 100
+    ntrajs = 20
     batch_size = 16
     if strategy is None:
         nruns = 1000000 # just go big
@@ -128,4 +132,4 @@ if __name__ == '__main__':
         (labels, peps), (withheld_labels, withheld_peps) = mix_split([peps, withheld_peps], [labels, withheld_labels])
         evaluate_strategy((labels, peps), (withheld_labels, withheld_peps), learner,
                    odir, strategy=strategy, nruns=nruns, index=i, regression=regression,
-                   batch_size=batch_size, calibration=True)
+                   batch_size=batch_size, calibration=calibration)

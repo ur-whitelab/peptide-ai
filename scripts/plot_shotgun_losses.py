@@ -33,7 +33,7 @@ ax = plt.gca()
 plt.title('{}'.format(dataset_name))
 plt.xlabel('Given Examples')
 plt.ylabel('Accuracy')
-ax.set_ylim(0.0, 1.0)
+ax.set_ylim(0.5, 1.0)
 x_range = range(len(avg_withheld_accuracy))
 alpha_val = 0.1
 small_lw = 0.5
