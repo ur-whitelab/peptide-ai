@@ -114,12 +114,12 @@ if __name__ == '__main__':
     name, (labels, peps), (withheld_labels, withheld_peps) = datasets[int(dataset_choice)]
 
     strategy, hyperparam_pairs = get_active_learner(strategy_str, convolution_params=convolution_params)
-    learner = Learner(1, hyperparam_pairs, regression, debug=False)
+    learner = Learner(hyperparam_pairs, regression, debug=False)
 
     odir = os.path.join(output_dirname + '-' + str(NSAMPLES), strategy_str, dataset_choice)
     os.makedirs(odir, exist_ok=True)
     nruns = NSAMPLES
-    ntrajs = 20
+    ntrajs = 100
     batch_size = 16
     if strategy is None:
         nruns = 1000000 # just go big

@@ -12,7 +12,6 @@ META_TRAIN_ITERS = 2000
 META_PERIOD = 50
 META_INNER_SAMPLES = 5
 META_VALIDATION_SAMPLES = 100
-LABEL_DIMENSION = 2
 TEST_ZERO_SHOT = True
 SWAP_LABELS = True
 
@@ -21,19 +20,18 @@ def inner_iter(sess, learner, k, labels, peps, strategy, swap_labels=SWAP_LABELS
     pep_choice_indices = []
     if swap_labels and np.random.uniform() < 0.5:
         swapped_labels = np.zeros_like(labels)
-        swapped_labels[:,0] = 1 - labels[:,0]
-        swapped_labels[:,1] = 1 - labels[:,1]
+        swapped_labels = 1. - labels
         labels = swapped_labels
     output = learner.eval_labels(sess, peps)
     for i in range(k):
         if strategy is None:
-            loss = learner.train(sess, labels, peps)[-1]
+            loss = np.mean(learner.train(sess, labels, peps)[-1])
         else:
             chosen_idx = strategy(peps, output, False)
             pep_choice_indices.append(chosen_idx)
             # train for the chosen number of steps after each observation
             # only append final training value
-            loss = learner.train(sess, labels[pep_choice_indices], peps[pep_choice_indices])[-1]
+            loss = np.mean(learner.train(sess, labels[pep_choice_indices], peps[pep_choice_indices])[-1])
     return loss
 
 if __name__ == '__main__':
@@ -53,21 +51,21 @@ if __name__ == '__main__':
     # withhold one dataset
     print('Withholding {}'.format(datasets[withhold_index][0]))
     strategy, hyperparam_pairs = get_active_learner(strategy_str, stochastic=True)
-    learner = Learner(LABEL_DIMENSION, hyperparam_pairs, False, MODEL_LEARNING_RATE)
+    learner = Learner(hyperparam_pairs, False, MODEL_LEARNING_RATE)
     # get trainables from learner + strategy
-    to_train = tf.trainable_variables()
+    to_train = tf.compat.v1.trainable_variables()
 
     # now create hyper version
-    hyper_trains = [tf.get_variable(shape=v.shape, dtype=v.dtype, name='hyper-{}'.format(v.name.split(':')[0])) for  v in to_train]
-    update_hypers = tf.train.AdamOptimizer(eta).apply_gradients([(h - v, h) for h,v in zip(hyper_trains, to_train)])
+    hyper_trains = [tf.compat.v1.get_variable(shape=v.shape, dtype=v.dtype, name='hyper-{}'.format(v.name.split(':')[0])) for  v in to_train]
+    update_hypers = tf.compat.v1.train.AdamOptimizer(eta).apply_gradients([(h - v, h) for h,v in zip(hyper_trains, to_train)])
     #update_hypers = tf.group(*[h.assign(v * eta + (1 - eta) * h) for h,v in zip(hyper_trains, to_train)])
-    reset_vars = tf.group(*[v.assign(h) for h,v in zip(hyper_trains, to_train)])
-    var_delta = tf.reduce_sum([tf.reduce_sum((h - v)**2) for h,v in zip(hyper_trains, to_train)])
+    reset_vars = tf.compat.v1.group(*[v.assign(h) for h,v in zip(hyper_trains, to_train)])
+    var_delta = tf.compat.v1.reduce_sum([tf.compat.v1.reduce_sum((h - v)**2) for h,v in zip(hyper_trains, to_train)])
 
-    saver = tf.train.Saver(hyper_trains)
-    with tf.Session() as sess:
+    saver = tf.compat.v1.train.Saver(hyper_trains)
+    with tf.compat.v1.Session() as sess:
         # init
-        sess.run(tf.global_variables_initializer())
+        sess.run(tf.compat.v1.global_variables_initializer())
 
         previous_losses = [np.nan] * META_PERIOD
         best = 100
@@ -82,13 +80,13 @@ if __name__ == '__main__':
                     if data_index != withhold_index:
                         break
                 _name, data, _withheld =  datasets[data_index]
-                inner_iter(sess, learner, META_INNER_SAMPLES, data[0], data[1], strategy)
+                inner_iter(sess, learner, META_INNER_SAMPLES, data[0][:,None], data[1], strategy)
                 update_size = sess.run(var_delta)
                 sess.run(update_hypers)
                 sess.run(reset_vars)
                 # eval on withheld dataset
                 _name, data, _withheld =  datasets[withhold_index]
-                losses = inner_iter(sess, learner, META_INNER_SAMPLES, data[0], data[1], strategy)
+                losses = inner_iter(sess, learner, META_INNER_SAMPLES, data[0][:,None], data[1], strategy)
                 previous_losses.append(losses)
                 del previous_losses[0]
                 # reset so we don't save the training
@@ -106,7 +104,7 @@ if __name__ == '__main__':
                         break
         # get final training
         data_name, data, _withheld =  datasets[withhold_index]
-        loss = inner_iter(sess, learner, META_INNER_SAMPLES, data[0], data[1], strategy)
+        loss = inner_iter(sess, learner, META_INNER_SAMPLES, data[0][:,None], data[1], strategy)
         print('Loss on validation task {} is {}'.format(data_name, loss))
         sess.run(reset_vars)
         print('running evaluation')
@@ -118,8 +116,7 @@ if __name__ == '__main__':
             # zero shot with swapped labels
             if SWAP_LABELS:
                 for i in range(1,3): #iter over train/withheld
-                        for j in range(2): #iter over class
-                            datasets[withhold_index][i][0][:,j] = 1 - datasets[withhold_index][i][0][:,j]
+                    datasets[withhold_index][i][0] = 1 - datasets[withhold_index][i][0]
             evaluate_strategy(datasets[withhold_index][1], datasets[withhold_index][2], learner,
                     output_dirname + 'zero', strategy=strategy, index=1, nruns=0, regression=False, sess=sess, plot_umap=False)
         for index in tqdm.tqdm(range(META_VALIDATION_SAMPLES)):
@@ -129,8 +126,6 @@ if __name__ == '__main__':
             # swap labels around
             if SWAP_LABELS:
                 for i in range(1,3): #iter over train/withheld
-                    for j in range(2): #iter over class
-                        #        dataset index t/v lab
-                        datasets[withhold_index][i][0][:,j] = 1 - datasets[withhold_index][i][0][:,j]
+                    datasets[withhold_index][i][0] = 1 - datasets[withhold_index][i][0]
             evaluate_strategy(datasets[withhold_index][1], datasets[withhold_index][2], learner,
                 output_dirname, strategy=strategy, index=index, nruns=meta_validation_length, regression=False, sess=sess)

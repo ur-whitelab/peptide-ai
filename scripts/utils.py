@@ -60,15 +60,14 @@ def load_data(filename, regression=False, labels_filename=None, withheld_percent
     return retval
 
 class Learner:
-    def __init__(self, label_width, hyperparam_pairs, regression=False, learning_rate=MODEL_LEARNING_RATE, calibration=True, debug=False):
+    def __init__(self, hyperparam_pairs, regression=False, learning_rate=MODEL_LEARNING_RATE, calibration=True, debug=False):
         tf.compat.v1.disable_eager_execution()
         self.filter_tensors = []
         self.calibration = calibration
         self.debug = debug
         if self.debug:
             self.check_op = tf.compat.v1.add_check_numerics_ops()
-        self.build_model(label_width,
-                         hyperparam_pairs,
+        self.build_model(hyperparam_pairs,
                          regression,
                          learning_rate)
 
@@ -95,11 +94,11 @@ class Learner:
 
         return output
 
-    def build_model(self, label_width, hyperparam_pairs, regression, learning_rate=MODEL_LEARNING_RATE):
+    def build_model(self, hyperparam_pairs, regression, learning_rate=MODEL_LEARNING_RATE):
         input_tensor = tf.compat.v1.placeholder(shape=np.array((None, MAX_LENGTH, ALPHABET_SIZE)),
                                     dtype=tf.compat.v1.float64,
                                     name='input')
-        labels_tensor = tf.compat.v1.placeholder(shape=(input_tensor.shape[0], label_width),
+        labels_tensor = tf.compat.v1.placeholder(shape=(input_tensor.shape[0], 1),
                                     dtype=tf.compat.v1.int32,
                                     name='labels')
         dropout_rate = tf.compat.v1.placeholder_with_default(tf.compat.v1.constant(DEFAULT_DROPOUT_RATE, dtype=tf.compat.v1.float64), shape=(), name='dropout_rate')
@@ -126,7 +125,7 @@ class Learner:
                                                       activation=tf.compat.v1.nn.relu),
                                       rate=dropout_rate)
             # x is now the final layer
-            logits = tf.compat.v1.layers.dense(x, label_width)
+            logits = tf.compat.v1.layers.dense(x, 1)
             sigmoid_logits = tf.compat.v1.nn.sigmoid(logits)
             self.classifier_outputs.append(sigmoid_logits)
             #classifiers_losses.append(tf.compat.v1.losses.softmax_cross_entropy(onehot_labels=labels_tensor,logits=logits))
@@ -151,9 +150,9 @@ class Learner:
         # should be left with gradient of length aa_counts
         self.count_grads = tf.compat.v1.reduce_sum(count_grads, axis=[0, 1])
         if self.calibration:
-            self.build_calibration_graph(label_width, labels_tensor, learning_rate)
+            self.build_calibration_graph(labels_tensor, learning_rate)
 
-    def build_calibration_graph(self, label_width, labels_tensor, learning_rate):
+    def build_calibration_graph(self, labels_tensor, learning_rate):
         # uncalibrated logits, to be fed in
         # clip to avoid nans in logs
         s = tf.compat.v1.clip_by_value(self.classifier_outputs[-1], 1e-5, 0.9999)
@@ -322,7 +321,7 @@ def prepare_data(positive_filename, negative_filenames, regression, withheld_per
     # now re-shuffle all these in the same way
     shuffle_same_way([labels, peps])
     shuffle_same_way([withheld_labels, withheld_peps])
-    return (labels, peps), (withheld_labels, withheld_peps)
+    return [labels, peps], [withheld_labels, withheld_peps]
 
 
 def load_datasets(root, withheld_percent=0.2):
@@ -352,7 +351,7 @@ def load_datasets(root, withheld_percent=0.2):
         for nf, nw in dataset_fakes[n]:
             negs.append((os.path.join(root, '{}-sequence-vectors.npy'.format(nf)), nw))
         train, withheld = prepare_data(pos, negs, False, withheld_percent=withheld_percent)
-        datasets.append((n, train, withheld))
+        datasets.append([n, train, withheld])
     return datasets
 
 def project_peptides(name, seqs, weights, cmap=None, labels=None, ax=None, colorbar=True):
