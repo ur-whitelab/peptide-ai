@@ -1,0 +1,154 @@
+TensorFlow 2.0 Upgrade Script
+-----------------------------
+Converted 11 files
+Detected 5 issues that require attention
+--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
+File: scripts/reptile.py
+--------------------------------------------------------------------------------
+scripts/reptile.py:61:20: WARNING: tf.get_variable requires manual check. tf.get_variable returns ResourceVariables by default in 2.0, which have well-defined semantics and are stricter about shapes. You can disable this behavior by passing use_resource=False, or by calling tf.compat.v1.disable_resource_variables().
+scripts/reptile.py:99:20: WARNING: *.save requires manual check. (This warning is only applicable if the code saves a tf.Keras model) Keras model.save now saves to the Tensorflow SavedModel format by default, instead of HDF5. To continue saving to HDF5, add the argument save_format='h5' to the save() function.
+--------------------------------------------------------------------------------
+File: scripts/convert_fake_data.py
+--------------------------------------------------------------------------------
+scripts/convert_fake_data.py:47:0: WARNING: *.save requires manual check. (This warning is only applicable if the code saves a tf.Keras model) Keras model.save now saves to the Tensorflow SavedModel format by default, instead of HDF5. To continue saving to HDF5, add the argument save_format='h5' to the save() function.
+--------------------------------------------------------------------------------
+File: scripts/vectorize_peptides.py
+--------------------------------------------------------------------------------
+scripts/vectorize_peptides.py:46:8: WARNING: *.save requires manual check. (This warning is only applicable if the code saves a tf.Keras model) Keras model.save now saves to the Tensorflow SavedModel format by default, instead of HDF5. To continue saving to HDF5, add the argument save_format='h5' to the save() function.
+--------------------------------------------------------------------------------
+File: scripts/vectorize_sequences.py
+--------------------------------------------------------------------------------
+scripts/vectorize_sequences.py:16:0: WARNING: *.save requires manual check. (This warning is only applicable if the code saves a tf.Keras model) Keras model.save now saves to the Tensorflow SavedModel format by default, instead of HDF5. To continue saving to HDF5, add the argument save_format='h5' to the save() function.
+================================================================================
+Detailed log follows:
+
+================================================================================
+================================================================================
+Input tree: 'scripts/'
+================================================================================
+--------------------------------------------------------------------------------
+Processing file 'scripts/active_learn.py'
+ outputting to 'scripts_v2/active_learn.py'
+--------------------------------------------------------------------------------
+
+
+--------------------------------------------------------------------------------
+
+--------------------------------------------------------------------------------
+Processing file 'scripts/convert_fake_data.py'
+ outputting to 'scripts_v2/convert_fake_data.py'
+--------------------------------------------------------------------------------
+
+47:0: WARNING: *.save requires manual check. (This warning is only applicable if the code saves a tf.Keras model) Keras model.save now saves to the Tensorflow SavedModel format by default, instead of HDF5. To continue saving to HDF5, add the argument save_format='h5' to the save() function.
+--------------------------------------------------------------------------------
+
+--------------------------------------------------------------------------------
+Processing file 'scripts/generate_fake_data.py'
+ outputting to 'scripts_v2/generate_fake_data.py'
+--------------------------------------------------------------------------------
+
+ERROR: Failed to parse.
+Traceback (most recent call last):
+  File "/home/ziyue/.local/lib/python2.7/site-packages/tensorflow/tools/compatibility/ast_edits.py", line 916, in update_string_pasta
+    t = pasta.parse(text)
+  File "/home/ziyue/.local/lib/python2.7/site-packages/pasta/__init__.py", line 23, in parse
+    t = ast_utils.parse(src)
+  File "/home/ziyue/.local/lib/python2.7/site-packages/pasta/base/ast_utils.py", line 56, in parse
+    tree = ast.parse(sanitize_source(src))
+  File "/usr/lib/python2.7/ast.py", line 37, in parse
+    return compile(source, filename, mode, PyCF_ONLY_AST)
+  File "<unknown>", line 56
+    f.write(f'FAKE{i:05d}\n')
+                           ^
+SyntaxError: invalid syntax
+
+--------------------------------------------------------------------------------
+
+--------------------------------------------------------------------------------
+Processing file 'scripts/get_auc_average.py'
+ outputting to 'scripts_v2/get_auc_average.py'
+--------------------------------------------------------------------------------
+
+
+--------------------------------------------------------------------------------
+
+--------------------------------------------------------------------------------
+Processing file 'scripts/plot_manifold.py'
+ outputting to 'scripts_v2/plot_manifold.py'
+--------------------------------------------------------------------------------
+
+
+--------------------------------------------------------------------------------
+
+--------------------------------------------------------------------------------
+Processing file 'scripts/plot_one_loss_curve.py'
+ outputting to 'scripts_v2/plot_one_loss_curve.py'
+--------------------------------------------------------------------------------
+
+
+--------------------------------------------------------------------------------
+
+--------------------------------------------------------------------------------
+Processing file 'scripts/plot_shotgun_losses.py'
+ outputting to 'scripts_v2/plot_shotgun_losses.py'
+--------------------------------------------------------------------------------
+
+
+--------------------------------------------------------------------------------
+
+--------------------------------------------------------------------------------
+Processing file 'scripts/reptile.py'
+ outputting to 'scripts_v2/reptile.py'
+--------------------------------------------------------------------------------
+
+58:15: INFO: Renamed 'tf.trainable_variables' to 'tf.compat.v1.trainable_variables'
+61:20: WARNING: tf.get_variable requires manual check. tf.get_variable returns ResourceVariables by default in 2.0, which have well-defined semantics and are stricter about shapes. You can disable this behavior by passing use_resource=False, or by calling tf.compat.v1.disable_resource_variables().
+61:20: INFO: Renamed 'tf.get_variable' to 'tf.compat.v1.get_variable'
+62:20: INFO: Renamed 'tf.train.AdamOptimizer' to 'tf.compat.v1.train.AdamOptimizer'
+65:16: INFO: Added keywords to args of function 'tf.reduce_sum'
+65:31: INFO: Added keywords to args of function 'tf.reduce_sum'
+67:12: INFO: Renamed 'tf.train.Saver' to 'tf.compat.v1.train.Saver'
+68:9: INFO: Renamed 'tf.Session' to 'tf.compat.v1.Session'
+70:17: INFO: Renamed 'tf.global_variables_initializer' to 'tf.compat.v1.global_variables_initializer'
+99:20: WARNING: *.save requires manual check. (This warning is only applicable if the code saves a tf.Keras model) Keras model.save now saves to the Tensorflow SavedModel format by default, instead of HDF5. To continue saving to HDF5, add the argument save_format='h5' to the save() function.
+--------------------------------------------------------------------------------
+
+--------------------------------------------------------------------------------
+Processing file 'scripts/utils.py'
+ outputting to 'scripts_v2/utils.py'
+--------------------------------------------------------------------------------
+
+ERROR: Failed to parse.
+Traceback (most recent call last):
+  File "/home/ziyue/.local/lib/python2.7/site-packages/tensorflow/tools/compatibility/ast_edits.py", line 916, in update_string_pasta
+    t = pasta.parse(text)
+  File "/home/ziyue/.local/lib/python2.7/site-packages/pasta/__init__.py", line 23, in parse
+    t = ast_utils.parse(src)
+  File "/home/ziyue/.local/lib/python2.7/site-packages/pasta/base/ast_utils.py", line 56, in parse
+    tree = ast.parse(sanitize_source(src))
+  File "/usr/lib/python2.7/ast.py", line 37, in parse
+    return compile(source, filename, mode, PyCF_ONLY_AST)
+  File "<unknown>", line 211
+    print('Using', *[n for n,w in negative_filenames])
+                   ^
+SyntaxError: invalid syntax
+
+--------------------------------------------------------------------------------
+
+--------------------------------------------------------------------------------
+Processing file 'scripts/vectorize_peptides.py'
+ outputting to 'scripts_v2/vectorize_peptides.py'
+--------------------------------------------------------------------------------
+
+46:8: WARNING: *.save requires manual check. (This warning is only applicable if the code saves a tf.Keras model) Keras model.save now saves to the Tensorflow SavedModel format by default, instead of HDF5. To continue saving to HDF5, add the argument save_format='h5' to the save() function.
+--------------------------------------------------------------------------------
+
+--------------------------------------------------------------------------------
+Processing file 'scripts/vectorize_sequences.py'
+ outputting to 'scripts_v2/vectorize_sequences.py'
+--------------------------------------------------------------------------------
+
+16:0: WARNING: *.save requires manual check. (This warning is only applicable if the code saves a tf.Keras model) Keras model.save now saves to the Tensorflow SavedModel format by default, instead of HDF5. To continue saving to HDF5, add the argument save_format='h5' to the save() function.
+--------------------------------------------------------------------------------
+

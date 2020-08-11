@@ -1,0 +1,12 @@
+antibacterial
+anticancer
+antifungal
+antiHIV
+antiMRSA
+antiparasital
+antiviral
+hemolytic
+soluble
+shp2
+tula2
+human
